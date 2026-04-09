@@ -3,7 +3,7 @@
     <div class="card-header">
       <div>
         <h2>天气查询</h2>
-        <p>输入城市名称，获取当前天气和生活建议。</p>
+        <p>输入城市名或自然语言问题，获取天气和生活建议。</p>
       </div>
       <span class="status-chip" :class="{ loading: isLoading }">
         {{ isLoading ? '查询中...' : '准备就绪' }}
@@ -12,13 +12,13 @@
 
     <div class="weather-input">
       <input
-        v-model="city"
+        v-model="query"
         type="text"
-        placeholder="例如：北京、上海、New York"
+        placeholder="例如：今天合肥热不热 或 北京会下雨吗 或 广州"
         @keyup.enter="getWeather"
       />
-      <button class="action-btn" @click="getWeather" :disabled="isLoading || !city.trim()">
-        {{ isLoading ? '查询中...' : '获取天气' }}
+      <button class="action-btn" @click="getWeather" :disabled="isLoading || !query.trim()">
+        {{ isLoading ? '查询中...' : '查询' }}
       </button>
     </div>
 
@@ -32,13 +32,13 @@
 import { ref } from 'vue'
 import axios from 'axios'
 
-const city = ref('')
+const query = ref('')
 const weatherResponse = ref('')
 const isLoading = ref(false)
 
 const getWeather = async () => {
-  if (!city.value.trim()) {
-    weatherResponse.value = '请输入城市名称。'
+  if (!query.value.trim()) {
+    weatherResponse.value = '请输入城市名称或问题。'
     return
   }
 
@@ -46,7 +46,7 @@ const getWeather = async () => {
   weatherResponse.value = ''
 
   try {
-    const res = await axios.post('http://localhost:8000/weather', { city: city.value })
+    const res = await axios.post('http://localhost:8000/weather', { query: query.value })
     weatherResponse.value = res.data.response
   } catch (error: any) {
     weatherResponse.value = error?.response?.data?.detail || error.message || '查询失败，请稍后重试。'

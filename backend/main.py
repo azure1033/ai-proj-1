@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import openai
 import os
 from dotenv import load_dotenv
-from weather_agent import get_weather_advice
+from weather_agent import get_weather_advice, get_weather_advice_with_focus
 
 load_dotenv()
 
@@ -26,12 +26,21 @@ client = openai.OpenAI(
 )
 
 class WeatherRequest(BaseModel):
-    city: str
+    city: str = None
+    query: str = None
 
 @app.post("/weather")
 def get_weather(request: WeatherRequest):
     try:
-        result = get_weather_advice(request.city)
+        # 支持自然语言查询（query参数）和传统查询（city参数）
+        if request.query:
+            # 使用自然语言处理
+            result = get_weather_advice_with_focus(request.query)
+        elif request.city:
+            # 传统方式，直接查询城市
+            result = get_weather_advice(request.city)
+        else:
+            raise ValueError("请提供城市名称（city）或自然语言查询（query）")
         return {"response": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"天气查询失败: {str(e)}")

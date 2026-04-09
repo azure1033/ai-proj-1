@@ -1,4 +1,5 @@
 import os
+import re
 from typing import ClassVar, Dict, Tuple
 
 import requests
@@ -210,24 +211,106 @@ class WeatherTool(BaseTool):
 
 weather_tool = WeatherTool()
 
+# 获取所有城市名称（中英文）用于提取
+ALL_CITIES = list(weather_tool.city_coords.keys())
+
+def extract_city_from_query(query: str) -> str:
+    """
+    从用户查询中提取城市名称。
+    支持中英文城市名、带修饰词的表达等。
+    """
+    # 先尝试直接匹配
+    for city in ALL_CITIES:
+        if city in query:
+            return city
+    
+    # 如果直接匹配失败，使用LLM进行智能提取
+    extraction_prompt = f"""
+请从以下用户查询中提取城市名称。只返回城市名，不要返回其他内容。
+
+支持的城市列表（部分）：北京、上海、广州、深圳、合肥、南京、杭州、武汉、成都、重庆、西安、天津、苏州、郑州、长沙、青岛、沈阳、大连、厦门、福州、Beijing、Shanghai、Guangzhou、Shenzhen、Hefei等。
+
+用户查询：{query}
+
+返回格式：城市名称（如果无法识别则返回"无"）
+"""
+    response = llm.invoke([{"role": "user", "content": extraction_prompt}])
+    city = response.content.strip()
+    
+    # 如果LLM返回的结果在支持列表中，则使用；否则返回None
+    if city in ALL_CITIES:
+        return city
+    return None
+
+def extract_user_focus(query: str) -> str:
+    """
+    从用户查询中提取关键问题/关注点。
+    返回用户主要关注的方面。
+    """
+    focus_keywords = {
+        "温度|热|冷|冷不冷|热不热|多少度": "温度",
+        "下雨|雨|伞|防雨": "是否下雨",
+        "穿|衣服|衣物|外套|羽绒": "穿衣建议",
+        "风|风力|刮风": "风力",
+        "湿度|潮湿|干燥": "湿度",
+        "空气质量|AQI|口罩|污染": "空气质量",
+        "出行|出去|户外|运动": "出行建议",
+    }
+    
+    user_focus = []
+    for keywords, category in focus_keywords.items():
+        if re.search(keywords, query):
+            user_focus.append(category)
+    
+    return "、".join(user_focus) if user_focus else "综合建议"
+
 weather_prompt = PromptTemplate.from_template(
     """
 你是一个智能天气助手。基于以下天气信息，给出实用的生活建议。
 
 天气信息: {weather_info}
 
-请提供：
-1. 当前天气状况总结
-2. 相关的出行建议（如是否需要带伞、穿什么衣服等）
-3. 健康建议（如空气质量相关的提醒）
+用户关注点：{user_focus}
 
-用友好的语气回复。
+根据用户的关注点，重点提供相关建议：
+1. 针对用户提到的问题给出明确答复
+2. 补充一些用户没提到但有用的建议（作为额外提示）
+3. 用友好的语气回复
+
+格式：先直接回答用户的问题，然后说"此外，我还建议..."来补充其他建议。
 """
 )
 
-
 def get_weather_advice(city: str) -> str:
+    """原始函数，保持向后兼容"""
     weather_info = weather_tool._run(city)
-    prompt = weather_prompt.format(weather_info=weather_info)
+    focus = "综合建议"
+    prompt = weather_prompt.format(weather_info=weather_info, user_focus=focus)
     response = llm.invoke([{"role": "user", "content": prompt}])
     return response.content
+
+def get_weather_advice_with_focus(query: str) -> str:
+    """
+    新函数：支持自然语言输入，智能提取城市和关注点。
+    
+    示例输入：
+    - "今天合肥热不热，需不需要穿外套"
+    - "北京会不会下雨，要带伞吗"
+    - "杭州湿度怎么样"
+    """
+    # 提取城市
+    city = extract_city_from_query(query)
+    if not city:
+        return "抱歉，我无法识别您提到的城市。请告诉我具体是哪个城市。"
+    
+    # 提取用户关注点
+    user_focus = extract_user_focus(query)
+    
+    # 获取天气信息
+    weather_info = weather_tool._run(city)
+    
+    # 生成针对性建议
+    prompt = weather_prompt.format(weather_info=weather_info, user_focus=user_focus)
+    response = llm.invoke([{"role": "user", "content": prompt}])
+    return response.content
+
