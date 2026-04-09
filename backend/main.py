@@ -49,10 +49,37 @@ class QueryRequest(BaseModel):
     query: str
 
 def classify_intent(query: str) -> str:
-    # 简单的意图分类，使用LLM
+    """
+    智能意图分类，优先检查天气相关关键词，然后使用LLM进行分类。
+    返回：天气查询、问答、总结、翻译、代码解释
+    """
+    # 天气相关关键词（中文）
+    weather_keywords = [
+        "天气", "天气如何", "天气怎么样",
+        "温度", "多少度", "热", "冷", "热不热", "冷不冷",
+        "下雨", "会下雨", "下雨吗", "下雪", "会下雪",
+        "穿", "衣服", "衣物", "外套", "羽绒", "需要穿",
+        "风", "风力", "刮风", "有没有风", "风大吗",
+        "湿度", "潮湿", "干燥",
+        "空气质量", "AQI", "口罩", "污染", "空气怎么样",
+        "出行", "出去", "户外", "运动", "能不能出去",
+        "紫外线", "阳光", "太阳",
+        "雾霾", "雾", "能见度",
+        "今天", "明天", "后天",
+        "这里", "这个城市", "当地"
+    ]
+    
+    query_lower = query.lower()
+    
+    # 检查是否包含天气关键词
+    for keyword in weather_keywords:
+        if keyword in query_lower or keyword in query:
+            return "天气查询"
+    
+    # 如果没有匹配天气关键词，使用LLM进行分类
     prompt = f"请根据以下用户查询，判断意图属于以下哪一类：问答、总结、翻译、代码解释。只回复类别名称。\n查询：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",  # 更新模型名
+        model="deepseek-ai/DeepSeek-V2.5",
         messages=[{"role": "user", "content": prompt}],
         max_tokens=10
     )
@@ -98,7 +125,11 @@ def handle_code_explain(query: str) -> str:
 @app.post("/ask")
 def ask(request: QueryRequest):
     intent = classify_intent(request.query)
-    if intent == "问答":
+    
+    # 根据意图调用对应的处理函数
+    if intent == "天气查询":
+        result = get_weather_advice_with_focus(request.query)
+    elif intent == "问答":
         result = handle_qa(request.query)
     elif intent == "总结":
         result = handle_summarize(request.query)
