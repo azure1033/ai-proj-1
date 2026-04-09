@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import openai
 import os
 from dotenv import load_dotenv
+from weather_agent import get_weather_advice
 
 load_dotenv()
 
@@ -23,6 +24,17 @@ client = openai.OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url="https://api.siliconflow.cn/"
 )
+
+class WeatherRequest(BaseModel):
+    city: str
+
+@app.post("/weather")
+def get_weather(request: WeatherRequest):
+    try:
+        result = get_weather_advice(request.city)
+        return {"response": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"天气查询失败: {str(e)}")
 
 class QueryRequest(BaseModel):
     query: str

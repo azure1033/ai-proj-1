@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import axios from 'axios'
+import Weather from './components/Weather.vue'
 
 const query = ref('')
 const response = ref('')
@@ -63,6 +64,8 @@ const ask = async () => {
           {{ isLoading ? '生成中...' : '提交请求' }}
         </button>
       </section>
+
+      <Weather />
 
       <section class="card result-card" v-if="response || intent">
         <div class="result-meta">
