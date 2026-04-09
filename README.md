@@ -12,9 +12,10 @@
 
 ## 技术栈
 
-- 后端：Python + FastAPI
+- 后端：Python + FastAPI + LangChain
 - AI 核心：DeepSeek 开源大模型
 - 前端：Vue3 + Vite
+- 天气数据：Open-Meteo API (免费)
 
 ## 运行
 
