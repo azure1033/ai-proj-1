@@ -1,7 +1,49 @@
 <template>
-  <section class="chat-container">
-    <!-- 顶部栏 -->
-    <header class="chat-header">
+  <div class="app-layout">
+    <!-- 侧边栏切换按钮 (移动端) -->
+    <button class="sidebar-toggle" @click="showSidebar = !showSidebar">
+      {{ showSidebar ? '✕' : '☰' }}
+    </button>
+
+    <!-- 会话列表侧边栏 -->
+    <aside class="sidebar" :class="{ collapsed: !showSidebar }">
+      <div class="sidebar-header">
+        <h2>{{ t('sessionList') }}</h2>
+        <button class="new-session-btn" @click="createNewSession" :disabled="isLoading">
+          + {{ t('newChat') }}
+        </button>
+      </div>
+      <div class="session-list">
+        <div
+          v-for="session in sortedSessions"
+          :key="session.id"
+          class="session-item"
+          :class="{ active: session.id === currentSessionId }"
+          @click="switchSession(session.id)"
+        >
+          <div class="session-info">
+            <div class="session-name">{{ session.name || t('newChat') }}</div>
+            <div class="session-preview">{{ session.preview || '...' }}</div>
+            <div class="session-meta">
+              <span>{{ session.message_count }} {{ t('messages') }}</span>
+              <span>{{ formatTime(session.updated_at) }}</span>
+            </div>
+          </div>
+          <div class="session-actions" @click.stop>
+            <button class="action-icon" @click="openRenameModal(session)" :title="t('rename')">✏️</button>
+            <button class="action-icon delete" @click="openDeleteModal(session)" :title="t('delete')">🗑️</button>
+          </div>
+        </div>
+        <div v-if="sessions.length === 0" class="empty-state">
+          <p>{{ t('noSessions') }}</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主聊天区域 -->
+    <section class="chat-container">
+      <!-- 顶部栏 -->
+      <header class="chat-header">
       <div class="header-left">
         <h1>{{ t('title') }}</h1>
         <p>{{ t('description') }}</p>
@@ -76,56 +118,87 @@
       </button>
     </div>
 
-    <!-- 快捷操作栏 -->
-    <div class="quick-actions">
-      <div class="action-left">
-        <button class="action-btn" @click="clearHistory" :disabled="isLoading">
-          {{ t('clearHistory') }}
-        </button>
-        <button class="action-btn" @click="toggleDocuments" :disabled="isLoading">
-          {{ t('uploadDocumentLabel') }}
-        </button>
+<!-- 快捷操作栏 -->
+      <div class="quick-actions">
+        <div class="action-left">
+          <button class="action-btn" @click="clearHistory" :disabled="isLoading">
+            {{ t('clearHistory') }}
+          </button>
+          <button class="action-btn" @click="toggleDocuments" :disabled="isLoading">
+            {{ t('uploadDocumentLabel') }}
+          </button>
+        </div>
+
+        <div class="action-right">
+          <button
+            v-for="example in examples[locale]"
+            :key="example.key"
+            class="example-btn"
+            @click="quickAsk(example.query)"
+          >
+            {{ example.label }}
+          </button>
+        </div>
       </div>
 
-      <div class="action-right">
-        <button
-          v-for="example in examples[locale]"
-          :key="example.key"
-          class="example-btn"
-          @click="quickAsk(example.query)"
-        >
-          {{ example.label }}
-        </button>
+      <!-- 文档上传面板 (可折叠) -->
+      <div v-if="showDocuments" class="documents-panel">
+        <div class="panel-header">
+          <h3>{{ t('uploadDocumentLabel') }}</h3>
+          <button class="close-btn" @click="showDocuments = false">×</button>
+        </div>
+        <div class="panel-content">
+          <input type="file" accept=".txt,.pdf,.docx" @change="handleFileChange" />
+          <button class="upload-btn" @click="uploadDocument" :disabled="!documentFile || isLoading">
+            {{ t('uploadButton') }}
+          </button>
+          <span class="upload-status">{{ uploadStatus }}</span>
+        </div>
+        <div v-if="documents.length > 0" class="document-list">
+          <h4>{{ t('docsLoaded') }}</h4>
+          <ul>
+            <li v-for="doc in documents" :key="doc.id">
+              <span class="doc-name">{{ doc.filename }}</span>
+              <button class="remove-btn" @click="removeDocument(doc.id)">×</button>
+            </li>
+          </ul>
+          <button class="clear-docs-btn" @click="clearDocuments">
+            {{ t('clearDocuments') }}
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 重命名弹窗 -->
+    <div v-if="showRenameModal" class="modal-overlay" @click.self="showRenameModal = false">
+      <div class="modal">
+        <h3>{{ t('renameSession') }}</h3>
+        <input
+          v-model="renameInput"
+          type="text"
+          :placeholder="t('sessionNamePlaceholder')"
+          @keydown.enter="confirmRename"
+          ref="renameInputRef"
+        />
+        <div class="modal-actions">
+          <button class="cancel-btn" @click="showRenameModal = false">{{ t('cancel') }}</button>
+          <button class="confirm-btn" @click="confirmRename">{{ t('confirm') }}</button>
+        </div>
       </div>
     </div>
 
-    <!-- 文档上传面板 (可折叠) -->
-    <div v-if="showDocuments" class="documents-panel">
-      <div class="panel-header">
-        <h3>{{ t('uploadDocumentLabel') }}</h3>
-        <button class="close-btn" @click="showDocuments = false">×</button>
-      </div>
-      <div class="panel-content">
-        <input type="file" accept=".txt,.pdf,.docx" @change="handleFileChange" />
-        <button class="upload-btn" @click="uploadDocument" :disabled="!documentFile || isLoading">
-          {{ t('uploadButton') }}
-        </button>
-        <span class="upload-status">{{ uploadStatus }}</span>
-      </div>
-      <div v-if="documents.length > 0" class="document-list">
-        <h4>{{ t('docsLoaded') }}</h4>
-        <ul>
-          <li v-for="doc in documents" :key="doc.id">
-            <span class="doc-name">{{ doc.filename }}</span>
-            <button class="remove-btn" @click="removeDocument(doc.id)">×</button>
-          </li>
-        </ul>
-        <button class="clear-docs-btn" @click="clearDocuments">
-          {{ t('clearDocuments') }}
-        </button>
+    <!-- 删除确认弹窗 -->
+    <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
+      <div class="modal">
+        <h3>{{ t('deleteSession') }}</h3>
+        <p>{{ t('confirmDelete') }}</p>
+        <div class="modal-actions">
+          <button class="cancel-btn" @click="showDeleteModal = false">{{ t('cancel') }}</button>
+          <button class="confirm-btn danger" @click="confirmDelete">{{ t('delete') }}</button>
+        </div>
       </div>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -143,6 +216,40 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   intent?: string
+}
+
+interface Session {
+  id: string
+  name: string
+  preview: string
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
+// 生成 UUID
+const generateId = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+// 格式化相对时间
+const formatTime = (dateStr: string): string => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+  if (minutes < 1) return locale.value === 'zh' ? '刚刚' : 'Just now'
+  if (minutes < 60) return `${minutes}m`
+  if (hours < 24) return `${hours}h`
+  if (days < 7) return `${days}d`
+  return date.toLocaleDateString()
 }
 
 const locale = ref<'zh' | 'en'>('zh')
@@ -167,6 +274,20 @@ const translations: Record<string, Record<string, string>> = {
     noDocuments: '未上传文档',
     welcomeMessage:
       '👋 欢迎使用 AI 智能助手！\n\n我支持以下功能：\n- **天气查询**：询问天气和穿衣建议\n- **问答**：回答各类问题\n- **总结**：总结长文本内容\n- **翻译**：多语言翻译\n- **代码解释**：解释代码逻辑\n\n请直接输入您的问题！',
+    // 会话相关
+    sessionList: '会话列表',
+    newChat: '新会话',
+    noSessions: '暂无会话',
+    messages: '条消息',
+    rename: '重命名',
+    delete: '删除',
+    renameSession: '重命名会话',
+    deleteSession: '删除会话',
+    confirmDelete: '确定要删除这个会话吗？此操作不可撤销。',
+    cancel: '取消',
+    confirm: '确认',
+    deleteLastSession: '无法删除最后一个会话',
+    sessionNamePlaceholder: '输入会话名称...',
   },
   en: {
     title: 'AI Assistant',
@@ -182,6 +303,20 @@ const translations: Record<string, Record<string, string>> = {
     noDocuments: 'No documents',
     welcomeMessage:
       '👋 Welcome to AI Assistant!\n\nI support:\n- **Weather**: weather and clothing advice\n- **Q&A**: answer questions\n- **Summarize**: summarize text\n- **Translate**: multilingual translation\n- **Code**: explain code\n\nAsk me anything!',
+    // Session related
+    sessionList: 'Sessions',
+    newChat: 'New Chat',
+    noSessions: 'No sessions',
+    messages: 'messages',
+    rename: 'Rename',
+    delete: 'Delete',
+    renameSession: 'Rename Session',
+    deleteSession: 'Delete Session',
+    confirmDelete: 'Are you sure you want to delete this session? This cannot be undone.',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
+    deleteLastSession: 'Cannot delete the last session',
+    sessionNamePlaceholder: 'Enter session name...',
   },
 }
 
@@ -233,6 +368,24 @@ const uploadStatus = ref('')
 const messagesEndRef = ref<HTMLElement>()
 const showDocuments = ref(false)
 
+// 会话状态
+const sessions = ref<Session[]>([])
+const currentSessionId = ref<string | null>(null)
+const showSidebar = ref(true)
+const showRenameModal = ref(false)
+const showDeleteModal = ref(false)
+const renameInput = ref('')
+const renameTargetId = ref<string | null>(null)
+const deleteTargetId = ref<string | null>(null)
+const renameInputRef = ref<HTMLInputElement>()
+
+// 会话排序 (按更新时间倒序)
+const sortedSessions = computed(() => {
+  return [...sessions.value].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  )
+})
+
 // Markdown 渲染
 const renderMarkdown = (content: string) => {
   try {
@@ -263,16 +416,176 @@ const initWelcome = () => {
 const t = (key: string) => translations[locale.value]?.[key] || translations.zh[key] || key
 const intentLabel = (intent: string) => intentLabels[locale.value]?.[intent] || intentLabels.zh[intent] || intent
 
-// 加载历史
-const loadHistory = async () => {
+// 加载会话列表
+const loadSessions = () => {
   try {
-    const res = await axios.get('http://localhost:8000/history')
-    messages.value = res.data.history || []
-    if (messages.value.length === 0) {
-      initWelcome()
+    const saved = localStorage.getItem('ai-chat-sessions')
+    if (saved) {
+      sessions.value = JSON.parse(saved)
+    }
+    const currentId = localStorage.getItem('ai-chat-current-session')
+    if (currentId) {
+      currentSessionId.value = currentId
     }
   } catch {
-    initWelcome()
+    sessions.value = []
+  }
+}
+
+// 保存会话列表
+const saveSessions = () => {
+  localStorage.setItem('ai-chat-sessions', JSON.stringify(sessions.value))
+  if (currentSessionId.value) {
+    localStorage.setItem('ai-chat-current-session', currentSessionId.value)
+  }
+}
+
+// 创建新会话
+const createNewSession = () => {
+  const newSession: Session = {
+    id: generateId(),
+    name: '',
+    preview: '',
+    message_count: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+  sessions.value.unshift(newSession)
+  saveSessions()
+  switchSession(newSession.id)
+}
+
+// 切换会话
+const switchSession = async (sessionId: string) => {
+  currentSessionId.value = sessionId
+  localStorage.setItem('ai-chat-current-session', sessionId)
+  messages.value = []
+  initWelcome()
+
+  try {
+    const res = await axios.get(`http://localhost:8000/sessions/${sessionId}/history`)
+    messages.value = res.data.history || []
+  } catch {
+    // 新会话没有历史，正常
+  }
+
+  await nextTick()
+  scrollToBottom()
+}
+
+// 重命名会话
+const openRenameModal = (session: Session) => {
+  renameTargetId.value = session.id
+  renameInput.value = session.name || ''
+  showRenameModal.value = true
+  nextTick(() => renameInputRef.value?.focus())
+}
+
+const confirmRename = async () => {
+  if (!renameTargetId.value || !renameInput.value.trim()) return
+
+  const session = sessions.value.find((s) => s.id === renameTargetId.value)
+  if (session) {
+    session.name = renameInput.value.trim()
+    session.updated_at = new Date().toISOString()
+    saveSessions()
+    try {
+      await axios.patch(`http://localhost:8000/sessions/${renameTargetId.value}`, {
+        name: renameInput.value.trim(),
+      })
+    } catch {
+      // 静默失败，前端已更新
+    }
+  }
+
+  showRenameModal.value = false
+  renameTargetId.value = null
+  renameInput.value = ''
+}
+
+// 删除会话
+const openDeleteModal = (session: Session) => {
+  deleteTargetId.value = session.id
+  showDeleteModal.value = true
+}
+
+const confirmDelete = async () => {
+  if (!deleteTargetId.value) return
+
+  // 检查是否是最后一个会话
+  if (sessions.value.length <= 1) {
+    alert(t('deleteLastSession'))
+    showDeleteModal.value = false
+    deleteTargetId.value = null
+    return
+  }
+
+  const wasCurrent = currentSessionId.value === deleteTargetId.value
+  sessions.value = sessions.value.filter((s) => s.id !== deleteTargetId.value)
+  saveSessions()
+
+  try {
+    await axios.delete(`http://localhost:8000/sessions/${deleteTargetId.value}`)
+  } catch {
+    // 静默失败
+  }
+
+  if (wasCurrent) {
+    // 切换到第一个会话
+    const nextSession = sortedSessions.value[0]
+    if (nextSession) {
+      await switchSession(nextSession.id)
+    }
+  }
+
+  showDeleteModal.value = false
+  deleteTargetId.value = null
+}
+
+// 发送消息
+const sendMessage = async () => {
+  if (!userInput.value.trim() || isLoading.value) return
+
+  const query = userInput.value.trim()
+  userInput.value = ''
+
+  messages.value.push({ role: 'user', content: query })
+
+  // 更新当前会话的 preview
+  if (currentSessionId.value) {
+    const session = sessions.value.find((s) => s.id === currentSessionId.value)
+    if (session) {
+      session.preview = query.length > 30 ? query.substring(0, 30) + '...' : query
+      session.message_count = messages.value.length
+      session.updated_at = new Date().toISOString()
+      saveSessions()
+    }
+  }
+
+  isLoading.value = true
+
+  try {
+    const res = await axios.post('http://localhost:8000/ask', {
+      query,
+      session_id: currentSessionId.value,
+    })
+    const { intent, response } = res.data
+    messages.value.push({ role: 'assistant', content: response, intent })
+
+    // 更新消息计数
+    if (currentSessionId.value) {
+      const session = sessions.value.find((s) => s.id === currentSessionId.value)
+      if (session) {
+        session.message_count = messages.value.length
+        session.updated_at = new Date().toISOString()
+        saveSessions()
+      }
+    }
+  } catch (error: any) {
+    const errorMsg = error?.response?.data?.detail || error.message || '请求失败，请稍后重试。'
+    messages.value.push({ role: 'assistant', content: errorMsg, intent: '错误' })
+  } finally {
+    isLoading.value = false
   }
 }
 
@@ -343,38 +656,31 @@ const clearDocuments = async () => {
   }
 }
 
-onMounted(async () => {
-  await loadHistory()
-  await fetchDocuments()
-})
-
-// 发送消息
-const sendMessage = async () => {
-  if (!userInput.value.trim() || isLoading.value) return
-
-  const query = userInput.value.trim()
-  userInput.value = ''
-
-  messages.value.push({ role: 'user', content: query })
-  isLoading.value = true
-
-  try {
-    const res = await axios.post('http://localhost:8000/ask', { query })
-    const { intent, response } = res.data
-    messages.value.push({ role: 'assistant', content: response, intent })
-  } catch (error: any) {
-    const errorMsg = error?.response?.data?.detail || error.message || '请求失败，请稍后重试。'
-    messages.value.push({ role: 'assistant', content: errorMsg, intent: '错误' })
-  } finally {
-    isLoading.value = false
-  }
-}
-
 // 快捷提问
 const quickAsk = (query: string) => {
   userInput.value = query
   nextTick(() => sendMessage())
 }
+
+onMounted(async () => {
+  loadSessions()
+
+  // 如果有保存的会话，加载其历史；否则创建新会话
+  if (currentSessionId.value) {
+    await switchSession(currentSessionId.value)
+  } else if (sessions.value.length === 0) {
+    // 创建第一个会话
+    createNewSession()
+  } else {
+    // 切换到第一个会话
+    const firstSession = sortedSessions.value[0]
+    if (firstSession) {
+      await switchSession(firstSession.id)
+    }
+  }
+
+  await fetchDocuments()
+})
 </script>
 
 <style scoped>
@@ -861,5 +1167,283 @@ const quickAsk = (query: string) => {
   .documents-panel {
     width: 100%;
   }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  .sidebar:not(.collapsed) {
+    transform: translateX(0);
+  }
+
+  .sidebar-toggle {
+    display: flex;
+  }
+}
+
+/* 应用布局 */
+.app-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 侧边栏切换按钮 */
+.sidebar-toggle {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 201;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: #667eea;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* 侧边栏 */
+.sidebar {
+  width: 280px;
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sidebar-header h2 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #1f2937;
+}
+
+.new-session-btn {
+  width: 100%;
+  padding: 10px 16px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.new-session-btn:hover:not(:disabled) {
+  background: #5a6fd6;
+}
+
+.new-session-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 会话列表 */
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.session-item {
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.session-item:hover {
+  background: #f3f4f6;
+}
+
+.session-item.active {
+  background: #eef2ff;
+  border: 1px solid #667eea;
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-preview {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.session-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  gap: 4px;
+}
+
+.session-item:hover .session-actions {
+  display: flex;
+}
+
+.action-icon {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.action-icon:hover {
+  background: #f3f4f6;
+}
+
+.action-icon.delete:hover {
+  background: #fee2e2;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+/* 模态框 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.modal {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+.modal h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  color: #1f2937;
+}
+
+.modal p {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.modal input[type="text"] {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+}
+
+.modal input[type="text"]:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.cancel-btn {
+  padding: 10px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: white;
+  color: #6b7280;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+  background: #f3f4f6;
+}
+
+.confirm-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #667eea;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.confirm-btn:hover {
+  background: #5a6fd6;
+}
+
+.confirm-btn.danger {
+  background: #dc2626;
+}
+
+.confirm-btn.danger:hover {
+  background: #b91c1c;
 }
 </style>

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
@@ -13,6 +13,23 @@ from weather_agent import get_weather_advice, get_weather_advice_with_focus
 from pypdf import PdfReader
 import docx
 from model_config import get_openai_client, IS_OLLAMA, MODEL
+from session_memory import (
+    get_or_create_session,
+    add_message,
+    get_history as get_session_history,
+    clear_history as clear_session_history,
+    get_context_window,
+    set_preference,
+    get_all_preferences,
+    delete_preferences,
+)
+from session_manager import (
+    list_sessions,
+    get_session,
+    create_session,
+    update_session,
+    delete_session,
+)
 
 HISTORY_FILE = Path(__file__).parent / "chat_history.json"
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -122,6 +139,7 @@ def get_weather(request: WeatherRequest):
 
 class QueryRequest(BaseModel):
     query: str
+    session_id: str | None = None
 
 
 def ensure_history_file() -> None:
@@ -194,6 +212,33 @@ def handle_qa(query: str) -> str:
     )
     return (response.choices[0].message.content or "").strip()
 
+def handle_qa_with_context(query: str, history: list, preference_context: str = "") -> str:
+    """带上下文的问答处理"""
+    # 构建消息列表
+    messages = []
+    
+    # 系统提示
+    system_prompt = (
+        "你是一个智能助手。请根据对话历史和用户偏好来回答当前问题。"
+        "如果用户提到之前的内容，请结合上下文进行回答。"
+        + preference_context
+    )
+    messages.append({"role": "system", "content": system_prompt})
+    
+    # 历史消息（用于上下文理解）
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    
+    # 当前问题
+    messages.append({"role": "user", "content": query})
+    
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        max_tokens=500
+    )
+    return (response.choices[0].message.content or "").strip()
+
 def handle_summarize(query: str) -> str:
     prompt = f"请总结以下内容：{query}"
     response = client.chat.completions.create(
@@ -248,6 +293,22 @@ def clear_documents():
 
 @app.post("/ask")
 def ask(request: QueryRequest):
+    # 获取或创建会话
+    session_id = get_or_create_session(request.session_id)
+    
+    # 添加用户消息到历史
+    add_message(session_id, "user", request.query)
+    
+    # 获取上下文窗口（用于 LLM）
+    context_window = get_context_window(session_id, request.query)
+    
+    # 获取用户偏好
+    prefs = get_all_preferences(session_id)
+    preference_context = ""
+    if prefs:
+        pref_lines = [f"- {k}: {v}" for k, v in prefs.items()]
+        preference_context = f"\n\n用户偏好：\n" + "\n".join(pref_lines)
+    
     if DOCUMENTS:
         result = handle_document_query(request.query)
         intent = "文档问答"
@@ -258,7 +319,7 @@ def ask(request: QueryRequest):
         if intent == "天气查询":
             result = get_weather_advice_with_focus(request.query)
         elif intent == "问答":
-            result = handle_qa(request.query)
+            result = handle_qa_with_context(request.query, context_window, preference_context)
         elif intent == "总结":
             result = handle_summarize(request.query)
         elif intent == "翻译":
@@ -266,28 +327,109 @@ def ask(request: QueryRequest):
         elif intent == "代码解释":
             result = handle_code_explain(request.query)
         else:
-            result = handle_qa(request.query)  # 默认问答
+            result = handle_qa_with_context(request.query, context_window, preference_context)
+    
+    # 添加助手回复到历史
+    add_message(session_id, "assistant", result)
 
-    user_entry = {
-        "role": "user",
-        "content": request.query,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    }
-    assistant_entry = {
-        "role": "assistant",
-        "content": result,
-        "intent": intent,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    }
-    append_history_entry(user_entry)
-    append_history_entry(assistant_entry)
-
-    return {"intent": intent, "response": result}
+    return {"intent": intent, "response": result, "session_id": session_id}
 
 
 @app.get("/history")
-def get_history():
-    return {"history": load_history()}
+def get_history_endpoint(session_id: str = Query(..., description="会话ID")):
+    """获取指定会话的历史消息"""
+    return {"session_id": session_id, "messages": get_session_history(session_id)}
+
+
+@app.post("/history/clear")
+def clear_history_endpoint(session_id: str = Query(..., description="会话ID")):
+    """清除指定会话的历史"""
+    clear_session_history(session_id)
+    return {"status": "ok", "message": "会话历史已清空", "session_id": session_id}
+
+
+class PreferencesRequest(BaseModel):
+    session_id: str
+    key: str
+    value: str
+
+
+@app.post("/preferences")
+def save_preference(request: PreferencesRequest):
+    """保存用户偏好"""
+    set_preference(request.session_id, request.key, request.value)
+    return {"status": "ok", "session_id": request.session_id, "key": request.key, "value": request.value}
+
+
+@app.get("/preferences")
+def get_preferences_endpoint(session_id: str = Query(..., description="会话ID")):
+    """获取用户偏好"""
+    return {"session_id": session_id, "preferences": get_all_preferences(session_id)}
+
+
+@app.delete("/preferences")
+def delete_preferences_endpoint(session_id: str = Query(..., description="会话ID")):
+    """删除用户偏好"""
+    delete_preferences(session_id)
+    return {"status": "ok", "message": "偏好已删除", "session_id": session_id}
+
+
+# ============ 会话管理 API ============
+
+class CreateSessionRequest(BaseModel):
+    name: str | None = None
+
+
+class UpdateSessionRequest(BaseModel):
+    name: str
+
+
+@app.get("/sessions")
+def get_sessions():
+    """列出所有会话"""
+    sessions_list = list_sessions()
+    return {"sessions": sessions_list}
+
+
+@app.post("/sessions")
+def create_new_session(request: CreateSessionRequest | None = None):
+    """创建新会话"""
+    meta = create_session(name=request.name if request else None)
+    return {"session": meta}
+
+
+@app.get("/sessions/{session_id}")
+def get_session_detail(session_id: str):
+    """获取会话详情"""
+    meta = get_session(session_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"session": meta}
+
+
+@app.patch("/sessions/{session_id}")
+def update_session_name(session_id: str, request: UpdateSessionRequest):
+    """更新会话名称"""
+    meta = update_session(session_id, request.name)
+    if not meta:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"session": meta}
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session_endpoint(session_id: str):
+    """删除会话"""
+    success = delete_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"status": "ok", "message": "会话已删除", "session_id": session_id}
+
+
+@app.get("/sessions/{session_id}/history")
+def get_session_messages(session_id: str):
+    """获取会话消息历史"""
+    history = get_session_history(session_id)
+    return {"session_id": session_id, "messages": history}
 
 
 @app.delete("/history")
