@@ -1,12 +1,90 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import openai
 import os
+import json
+import shutil
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
 from dotenv import load_dotenv
 from weather_agent import get_weather_advice, get_weather_advice_with_focus
+from pypdf import PdfReader
+import docx
+from model_config import get_openai_client, IS_OLLAMA, MODEL
 
-load_dotenv()
+HISTORY_FILE = Path(__file__).parent / "chat_history.json"
+UPLOAD_DIR = Path(__file__).parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+DOCUMENTS: list[dict] = []
+
+
+def extract_text_from_file(file_path: Path) -> str:
+    ext = file_path.suffix.lower()
+    if ext == ".txt":
+        return file_path.read_text(encoding="utf-8", errors="ignore")
+    if ext == ".pdf":
+        reader = PdfReader(str(file_path))
+        text = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            text.append(page_text)
+        return "\n\n".join(text)
+    if ext == ".docx":
+        doc = docx.Document(str(file_path))
+        text = [p.text for p in doc.paragraphs]
+        return "\n\n".join(text)
+    raise ValueError(f"不支持的文件类型：{ext}")
+
+
+def save_uploaded_file(upload_file: UploadFile) -> tuple[Path, str]:
+    filename = Path(upload_file.filename or 'uploaded_file').name
+    dest = UPLOAD_DIR / f"{uuid4().hex}_{filename}"
+    with dest.open("wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
+    upload_file.file.close()
+    return dest, filename
+
+
+def append_document(filename: str, text: str) -> dict:
+    doc_id = uuid4().hex
+    document = {
+        "id": doc_id,
+        "filename": filename,
+        "text": text,
+        "uploaded_at": datetime.utcnow().isoformat() + "Z",
+    }
+    DOCUMENTS.append(document)
+    return document
+
+
+def get_documents_context() -> str:
+    if not DOCUMENTS:
+        return ""
+    context_pieces = []
+    for doc in DOCUMENTS:
+        snippet = doc["text"]
+        if len(snippet) > 6000:
+            snippet = snippet[:6000] + "\n..."
+        context_pieces.append(f"文件名：{doc['filename']}\n内容：{snippet}")
+    return "\n\n".join(context_pieces)
+
+
+def handle_document_query(query: str) -> str:
+    context = get_documents_context()
+    prompt = (
+        "你是一个智能助手。以下是用户上传的文档内容。请基于这些文档回答问题。"
+        "如果文档中没有相关信息，请如实说明\n\n"
+        f"文档内容：\n{context}\n\n用户问题：{query}\n"
+        "请只基于文档内容作答，并在答案中说明引用自文档的部分。"
+    )
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=700,
+    )
+    return (response.choices[0].message.content or "").strip()
 
 app = FastAPI(title="AI 智能问答助手", description="基于大语言模型的多技能AI助手")
 
@@ -19,15 +97,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 配置OpenAI客户端，使用DeepSeek API (假设兼容OpenAI格式)
-client = openai.OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.siliconflow.cn/"
-)
+# 配置OpenAI客户端（根据环境变量自动选择 Ollama 或远程 API）
+client = get_openai_client()
 
 class WeatherRequest(BaseModel):
-    city: str = None
-    query: str = None
+    city: str | None = None
+    query: str | None = None
 
 @app.post("/weather")
 def get_weather(request: WeatherRequest):
@@ -47,6 +122,30 @@ def get_weather(request: WeatherRequest):
 
 class QueryRequest(BaseModel):
     query: str
+
+
+def ensure_history_file() -> None:
+    if not HISTORY_FILE.exists():
+        HISTORY_FILE.write_text("[]", encoding="utf-8")
+
+
+def load_history() -> list:
+    ensure_history_file()
+    try:
+        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+
+def save_history(history: list) -> None:
+    HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def append_history_entry(entry: dict) -> None:
+    history = load_history()
+    history.append(entry)
+    save_history(history)
+
 
 def classify_intent(query: str) -> str:
     """
@@ -79,67 +178,123 @@ def classify_intent(query: str) -> str:
     # 如果没有匹配天气关键词，使用LLM进行分类
     prompt = f"请根据以下用户查询，判断意图属于以下哪一类：问答、总结、翻译、代码解释。只回复类别名称。\n查询：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=10
     )
-    intent = response.choices[0].message.content.strip()
-    return intent
+    intent = response.choices[0].message.content or ""
+    return intent.strip()
 
 def handle_qa(query: str) -> str:
     prompt = f"请回答以下问题：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500
     )
-    return response.choices[0].message.content.strip()
+    return (response.choices[0].message.content or "").strip()
 
 def handle_summarize(query: str) -> str:
     prompt = f"请总结以下内容：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=300
     )
-    return response.choices[0].message.content.strip()
+    return (response.choices[0].message.content or "").strip()
 
 def handle_translate(query: str) -> str:
     prompt = f"请将以下文本翻译成中文：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500
     )
-    return response.choices[0].message.content.strip()
+    return (response.choices[0].message.content or "").strip()
 
 def handle_code_explain(query: str) -> str:
     prompt = f"请解释以下代码：{query}"
     response = client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V2.5",
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500
     )
-    return response.choices[0].message.content.strip()
+    return (response.choices[0].message.content or "").strip()
+
+
+@app.post("/documents/upload")
+def upload_document(file: UploadFile = File(...)):
+    try:
+        dest, filename = save_uploaded_file(file)
+        text = extract_text_from_file(dest)
+        document = append_document(filename, text)
+        return {"id": document["id"], "filename": filename, "uploaded_at": document["uploaded_at"]}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+
+@app.get("/documents")
+def list_documents():
+    return {"documents": [{"id": d["id"], "filename": d["filename"], "uploaded_at": d["uploaded_at"]} for d in DOCUMENTS]}
+
+
+@app.delete("/documents")
+def clear_documents():
+    DOCUMENTS.clear()
+    return {"status": "ok", "message": "文档已清空"}
+
 
 @app.post("/ask")
 def ask(request: QueryRequest):
-    intent = classify_intent(request.query)
-    
-    # 根据意图调用对应的处理函数
-    if intent == "天气查询":
-        result = get_weather_advice_with_focus(request.query)
-    elif intent == "问答":
-        result = handle_qa(request.query)
-    elif intent == "总结":
-        result = handle_summarize(request.query)
-    elif intent == "翻译":
-        result = handle_translate(request.query)
-    elif intent == "代码解释":
-        result = handle_code_explain(request.query)
+    if DOCUMENTS:
+        result = handle_document_query(request.query)
+        intent = "文档问答"
     else:
-        result = handle_qa(request.query)  # 默认问答
+        intent = classify_intent(request.query)
+        
+        # 根据意图调用对应的处理函数
+        if intent == "天气查询":
+            result = get_weather_advice_with_focus(request.query)
+        elif intent == "问答":
+            result = handle_qa(request.query)
+        elif intent == "总结":
+            result = handle_summarize(request.query)
+        elif intent == "翻译":
+            result = handle_translate(request.query)
+        elif intent == "代码解释":
+            result = handle_code_explain(request.query)
+        else:
+            result = handle_qa(request.query)  # 默认问答
+
+    user_entry = {
+        "role": "user",
+        "content": request.query,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    assistant_entry = {
+        "role": "assistant",
+        "content": result,
+        "intent": intent,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
+    append_history_entry(user_entry)
+    append_history_entry(assistant_entry)
+
     return {"intent": intent, "response": result}
+
+
+@app.get("/history")
+def get_history():
+    return {"history": load_history()}
+
+
+@app.delete("/history")
+def clear_history():
+    save_history([])
+    return {"status": "ok", "message": "聊天历史已清空"}
+
 
 @app.get("/")
 def root():

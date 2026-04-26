@@ -6,3 +6,6 @@ langchain
 langchain-openai
 langchain-community
 requests
+pypdf
+python-docx
+python-multipart

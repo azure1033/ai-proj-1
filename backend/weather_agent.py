@@ -6,16 +6,11 @@ import requests
 from dotenv import load_dotenv
 from langchain.tools import BaseTool
 from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
+from model_config import get_langchain_llm, MODEL
 
 load_dotenv()
 
-llm = ChatOpenAI(
-    model="deepseek-ai/DeepSeek-V2.5",
-    openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
-    openai_api_base="https://api.siliconflow.cn/",
-    temperature=0.7,
-)
+llm = get_langchain_llm()
 
 
 class WeatherTool(BaseTool):
@@ -152,7 +147,7 @@ class WeatherTool(BaseTool):
                 f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                 "&current_weather=true&hourly=temperature_2m,relative_humidity_2m,windspeed_10m&timezone=auto"
             )
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=3)
             response.raise_for_status()
             data = response.json()
 
