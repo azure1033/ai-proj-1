@@ -9,3 +9,6 @@ requests
 pypdf
 python-docx
 python-multipart
+tavily-python
+ddgs
+duckduckgo-search

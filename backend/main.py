@@ -18,7 +18,6 @@ from session_memory import (
     add_message,
     get_history as get_session_history,
     clear_history as clear_session_history,
-    get_context_window,
     set_preference,
     get_all_preferences,
     delete_preferences,
@@ -30,6 +29,7 @@ from session_manager import (
     update_session,
     delete_session,
 )
+from agent import run_agent
 
 HISTORY_FILE = Path(__file__).parent / "chat_history.json"
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -165,44 +165,6 @@ def append_history_entry(entry: dict) -> None:
     save_history(history)
 
 
-def classify_intent(query: str) -> str:
-    """
-    智能意图分类，优先检查天气相关关键词，然后使用LLM进行分类。
-    返回：天气查询、问答、总结、翻译、代码解释
-    """
-    # 天气相关关键词（中文）
-    weather_keywords = [
-        "天气", "天气如何", "天气怎么样",
-        "温度", "多少度", "热", "冷", "热不热", "冷不冷",
-        "下雨", "会下雨", "下雨吗", "下雪", "会下雪",
-        "穿", "衣服", "衣物", "外套", "羽绒", "需要穿",
-        "风", "风力", "刮风", "有没有风", "风大吗",
-        "湿度", "潮湿", "干燥",
-        "空气质量", "AQI", "口罩", "污染", "空气怎么样",
-        "出行", "出去", "户外", "运动", "能不能出去",
-        "紫外线", "阳光", "太阳",
-        "雾霾", "雾", "能见度",
-        "今天", "明天", "后天",
-        "这里", "这个城市", "当地"
-    ]
-    
-    query_lower = query.lower()
-    
-    # 检查是否包含天气关键词
-    for keyword in weather_keywords:
-        if keyword in query_lower or keyword in query:
-            return "天气查询"
-    
-    # 如果没有匹配天气关键词，使用LLM进行分类
-    prompt = f"请根据以下用户查询，判断意图属于以下哪一类：问答、总结、翻译、代码解释。只回复类别名称。\n查询：{query}"
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=10
-    )
-    intent = response.choices[0].message.content or ""
-    return intent.strip()
-
 def handle_qa(query: str) -> str:
     prompt = f"请回答以下问题：{query}"
     response = client.chat.completions.create(
@@ -299,40 +261,20 @@ def ask(request: QueryRequest):
     # 添加用户消息到历史
     add_message(session_id, "user", request.query)
     
-    # 获取上下文窗口（用于 LLM）
-    context_window = get_context_window(session_id, request.query)
+    # 统一走 Agent，让它自主决定是否调用工具
+    agent_result = run_agent(request.query)
     
-    # 获取用户偏好
-    prefs = get_all_preferences(session_id)
-    preference_context = ""
-    if prefs:
-        pref_lines = [f"- {k}: {v}" for k, v in prefs.items()]
-        preference_context = f"\n\n用户偏好：\n" + "\n".join(pref_lines)
-    
-    if DOCUMENTS:
-        result = handle_document_query(request.query)
-        intent = "文档问答"
-    else:
-        intent = classify_intent(request.query)
-        
-        # 根据意图调用对应的处理函数
-        if intent == "天气查询":
-            result = get_weather_advice_with_focus(request.query)
-        elif intent == "问答":
-            result = handle_qa_with_context(request.query, context_window, preference_context)
-        elif intent == "总结":
-            result = handle_summarize(request.query)
-        elif intent == "翻译":
-            result = handle_translate(request.query)
-        elif intent == "代码解释":
-            result = handle_code_explain(request.query)
-        else:
-            result = handle_qa_with_context(request.query, context_window, preference_context)
+    response_data = {
+        "intent": "Agent",
+        "response": agent_result["response"],
+        "session_id": session_id,
+        "steps": agent_result["steps"],
+    }
     
     # 添加助手回复到历史
-    add_message(session_id, "assistant", result)
+    add_message(session_id, "assistant", agent_result["response"])
 
-    return {"intent": intent, "response": result, "session_id": session_id}
+    return response_data
 
 
 @app.get("/history")

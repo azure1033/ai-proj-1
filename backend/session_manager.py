@@ -7,7 +7,7 @@
 - 与 session_memory.py 配合使用
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TypedDict
 from uuid import uuid4
 
@@ -101,7 +101,7 @@ def update_session(session_id: str, name: str) -> SessionMeta | None:
         return None
     
     session_metadata[session_id]["name"] = name
-    session_metadata[session_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    session_metadata[session_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
     
     return session_metadata[session_id]
 
@@ -124,7 +124,7 @@ def delete_session(session_id: str) -> bool:
 def touch_session(session_id: str) -> None:
     """更新会话的更新时间"""
     if session_id in session_metadata:
-        session_metadata[session_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        session_metadata[session_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
 def get_or_create_session_meta(session_id: str | None = None) -> tuple[str, SessionMeta]:

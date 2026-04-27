@@ -82,6 +82,26 @@
             {{ intentLabel(message.intent) }}
           </div>
 
+          <!-- Agent 步骤 (可折叠) -->
+          <div v-if="message.role === 'assistant' && message.steps && message.steps.length > 0" class="agent-steps">
+            <div
+              v-for="(step, si) in message.steps"
+              :key="si"
+              class="step-item"
+              :class="{ expanded: expandedSteps[idx]?.[si] }"
+            >
+              <div class="step-header" @click="toggleStep(idx, si)">
+                <span class="step-icon">{{ expandedSteps[idx]?.[si] ? '▼' : '▶' }}</span>
+                <span class="step-tool">{{ formatToolName(step.tool) }}</span>
+                <span class="step-check">✓</span>
+              </div>
+              <div v-if="expandedSteps[idx]?.[si]" class="step-detail">
+                <div class="step-input"><strong>{{ t('input') }}:</strong> {{ step.tool_input }}</div>
+                <div class="step-output"><strong>{{ t('output') }}:</strong> {{ step.observation }}</div>
+              </div>
+            </div>
+          </div>
+
           <!-- 消息文本 (支持 Markdown) -->
           <div class="message-bubble" v-html="renderMarkdown(message.content)"></div>
         </div>
@@ -216,6 +236,14 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   intent?: string
+  steps?: AgentStep[]
+}
+
+interface AgentStep {
+  thought: string
+  tool: string
+  tool_input: string
+  observation: string
 }
 
 interface Session {
@@ -288,6 +316,11 @@ const translations: Record<string, Record<string, string>> = {
     confirm: '确认',
     deleteLastSession: '无法删除最后一个会话',
     sessionNamePlaceholder: '输入会话名称...',
+    // Agent 相关
+    input: '输入',
+    output: '输出',
+    agentThinking: '正在思考...',
+    agentCallingTool: '调用工具...',
   },
   en: {
     title: 'AI Assistant',
@@ -317,6 +350,11 @@ const translations: Record<string, Record<string, string>> = {
     confirm: 'Confirm',
     deleteLastSession: 'Cannot delete the last session',
     sessionNamePlaceholder: 'Enter session name...',
+    // Agent related
+    input: 'Input',
+    output: 'Output',
+    agentThinking: 'Thinking...',
+    agentCallingTool: 'Calling tool...',
   },
 }
 
@@ -378,6 +416,30 @@ const renameInput = ref('')
 const renameTargetId = ref<string | null>(null)
 const deleteTargetId = ref<string | null>(null)
 const renameInputRef = ref<HTMLInputElement>()
+
+// Agent 步骤展开状态 (messageIndex → {stepIndex → boolean})
+const expandedSteps = ref<Record<number, Record<number, boolean>>>({})
+
+// 格式化工具名称
+const formatToolName = (tool: string): string => {
+  const names: Record<string, string> = {
+    get_weather: '🌤️ ' + (locale.value === 'zh' ? '查询天气' : 'Weather'),
+    web_search: '🔍 ' + (locale.value === 'zh' ? '网页搜索' : 'Web Search'),
+    summarize_text: '📝 ' + (locale.value === 'zh' ? '文本总结' : 'Summarize'),
+    translate_text: '🌐 ' + (locale.value === 'zh' ? '文本翻译' : 'Translate'),
+    explain_code: '💻 ' + (locale.value === 'zh' ? '代码解释' : 'Code'),
+    calculator: '🧮 ' + (locale.value === 'zh' ? '计算器' : 'Calculator'),
+  }
+  return names[tool] || tool
+}
+
+// 切换步骤展开/收起
+const toggleStep = (msgIdx: number, stepIdx: number) => {
+  if (!expandedSteps.value[msgIdx]) {
+    expandedSteps.value[msgIdx] = {}
+  }
+  expandedSteps.value[msgIdx][stepIdx] = !expandedSteps.value[msgIdx][stepIdx]
+}
 
 // 会话排序 (按更新时间倒序)
 const sortedSessions = computed(() => {
@@ -1445,5 +1507,75 @@ onMounted(async () => {
 
 .confirm-btn.danger:hover {
   background: #b91c1c;
+}
+
+/* Agent 步骤面板 */
+.agent-steps {
+  margin-bottom: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9fafb;
+}
+
+.step-item {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.step-item:last-child {
+  border-bottom: none;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.step-header:hover {
+  background: #f3f4f6;
+}
+
+.step-icon {
+  font-size: 10px;
+  width: 12px;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.step-tool {
+  flex: 1;
+  color: #374151;
+  font-weight: 500;
+}
+
+.step-check {
+  color: #10b981;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.step-detail {
+  padding: 8px 12px 12px 32px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.step-input {
+  color: #6b7280;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.step-output {
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 120px;
+  overflow-y: auto;
 }
 </style>
