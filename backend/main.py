@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import openai
 import os
@@ -29,7 +30,7 @@ from session_manager import (
     update_session,
     delete_session,
 )
-from agent import run_agent
+from agent import run_agent, run_agent_stream
 
 HISTORY_FILE = Path(__file__).parent / "chat_history.json"
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -254,27 +255,49 @@ def clear_documents():
 
 
 @app.post("/ask")
-def ask(request: QueryRequest):
-    # 获取或创建会话
+def ask(request: QueryRequest, stream: bool = Query(False)):
+    """统一对话接口，支持流式和非流式"""
     session_id = get_or_create_session(request.session_id)
-    
-    # 添加用户消息到历史
     add_message(session_id, "user", request.query)
-    
-    # 统一走 Agent，让它自主决定是否调用工具
-    agent_result = run_agent(request.query)
-    
-    response_data = {
-        "intent": "Agent",
-        "response": agent_result["response"],
-        "session_id": session_id,
-        "steps": agent_result["steps"],
-    }
-    
-    # 添加助手回复到历史
-    add_message(session_id, "assistant", agent_result["response"])
 
-    return response_data
+    if stream:
+        # 流式响应 (SSE)
+        async def generate_sse():
+            full_response = ""
+            try:
+                async for event in run_agent_stream(request.query):
+                    event_type = event["type"]
+                    event_data = event["data"]
+                    if event_type == "token":
+                        full_response += event_data
+                    elif event_type == "done":
+                        pass  # 最后处理
+                    yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                # 保存完整响应到历史
+                add_message(session_id, "assistant", full_response, "Agent")
+            except Exception as e:
+                yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            generate_sse(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    else:
+        # 非流式响应（原有逻辑）
+        agent_result = run_agent(request.query)
+        response_data = {
+            "intent": "Agent",
+            "response": agent_result["response"],
+            "session_id": session_id,
+            "steps": agent_result["steps"],
+        }
+        add_message(session_id, "assistant", agent_result["response"], "Agent")
+        return response_data
 
 
 @app.get("/history")

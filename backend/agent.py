@@ -3,10 +3,14 @@ Agent 模式核心模块
 
 提供:
 - create_agent_executor(): 创建 Tool-Calling Agent
-- run_agent(): 执行 Agent 并提取结果和步骤
+- run_agent(): 执行 Agent 并提取结果和步骤 (同步)
+- run_agent_stream(): 执行 Agent 并以 SSE 事件流式输出 (异步生成器)
 
 兼容 LangChain 1.x create_agent API
 """
+
+import json
+from typing import AsyncGenerator
 
 from langchain.agents import create_agent
 
@@ -145,3 +149,72 @@ def run_agent(query: str) -> dict:
             "response": f"抱歉，处理您的请求时遇到问题：{error_msg}",
             "steps": [],
         }
+
+
+async def run_agent_stream(query: str) -> AsyncGenerator[dict, None]:
+    """执行 Agent 并以 SSE 事件格式流式输出
+
+    生成事件:
+        {"type": "step", "data": {"tool": str, "input": str}}
+        {"type": "step_done", "data": {"tool": str, "output": str}}
+        {"type": "token", "data": str}
+        {"type": "done", "data": {}}
+        {"type": "error", "data": {"message": str}}
+
+    Args:
+        query: 用户查询
+
+    Yields:
+        dict: SSE 事件 (type + data)
+    """
+    agent = _create_agent_executor()
+
+    try:
+        async for event in agent.astream_events(
+            {"messages": [{"role": "user", "content": query}]},
+            config={"recursion_limit": MAX_ITERATIONS * 2 + 1},
+            version="v2",
+        ):
+            kind = event["event"]
+
+            # Token 级输出
+            if kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                content = getattr(chunk, "content", "")
+                if content:
+                    # 过滤掉 tool_calls 的 JSON 内容
+                    if isinstance(content, str) and content.strip():
+                        yield {"type": "token", "data": content}
+
+            # 工具调用开始
+            elif kind == "on_tool_start":
+                tool_name = event.get("name", "unknown")
+                tool_input = event["data"].get("input", {})
+                yield {
+                    "type": "step",
+                    "data": {
+                        "tool": tool_name,
+                        "input": str(tool_input)[:200],
+                    },
+                }
+
+            # 工具调用完成
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "unknown")
+                output = event["data"].get("output", "")
+                yield {
+                    "type": "step_done",
+                    "data": {
+                        "tool": tool_name,
+                        "output": str(output)[:300],
+                    },
+                }
+
+        yield {"type": "done", "data": {}}
+
+    except Exception as e:
+        yield {
+            "type": "error",
+            "data": {"message": f"流式处理出错: {str(e)}"},
+        }
+        yield {"type": "done", "data": {}}

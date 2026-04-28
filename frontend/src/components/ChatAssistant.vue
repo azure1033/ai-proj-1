@@ -82,28 +82,35 @@
             {{ intentLabel(message.intent) }}
           </div>
 
-          <!-- Agent 步骤 (可折叠) -->
+          <!-- Agent 步骤 (可折叠) - 支持流式更新 -->
           <div v-if="message.role === 'assistant' && message.steps && message.steps.length > 0" class="agent-steps">
             <div
               v-for="(step, si) in message.steps"
               :key="si"
-              class="step-item"
+              class="step-item streaming"
               :class="{ expanded: expandedSteps[idx]?.[si] }"
             >
               <div class="step-header" @click="toggleStep(idx, si)">
                 <span class="step-icon">{{ expandedSteps[idx]?.[si] ? '▼' : '▶' }}</span>
                 <span class="step-tool">{{ formatToolName(step.tool) }}</span>
-                <span class="step-check">✓</span>
+                <span v-if="step.observation" class="step-check">✓</span>
+                <span v-else class="step-spinner">⏳</span>
               </div>
               <div v-if="expandedSteps[idx]?.[si]" class="step-detail">
                 <div class="step-input"><strong>{{ t('input') }}:</strong> {{ step.tool_input }}</div>
-                <div class="step-output"><strong>{{ t('output') }}:</strong> {{ step.observation }}</div>
+                <div class="step-output"><strong>{{ t('output') }}:</strong> {{ step.observation || t('streamingStep') + '...' }}</div>
               </div>
             </div>
           </div>
 
           <!-- 消息文本 (支持 Markdown) -->
-          <div class="message-bubble" v-html="renderMarkdown(message.content)"></div>
+          <div
+            class="message-bubble"
+            :class="{ streaming: isLoading && idx === messages.length - 1 && message.role === 'assistant' }"
+            v-html="renderMarkdown(message.content)"
+          ></div>
+          <!-- 流式光标 -->
+          <span v-if="isLoading && idx === messages.length - 1 && message.role === 'assistant'" class="streaming-cursor">▊</span>
         </div>
       </div>
 
@@ -321,6 +328,9 @@ const translations: Record<string, Record<string, string>> = {
     output: '输出',
     agentThinking: '正在思考...',
     agentCallingTool: '调用工具...',
+    streamingStep: '正在执行',
+    streamingDone: '完成',
+    errorDefault: '请求失败，请稍后重试。',
   },
   en: {
     title: 'AI Assistant',
@@ -336,7 +346,6 @@ const translations: Record<string, Record<string, string>> = {
     noDocuments: 'No documents',
     welcomeMessage:
       '👋 Welcome to AI Assistant!\n\nI support:\n- **Weather**: weather and clothing advice\n- **Q&A**: answer questions\n- **Summarize**: summarize text\n- **Translate**: multilingual translation\n- **Code**: explain code\n\nAsk me anything!',
-    // Session related
     sessionList: 'Sessions',
     newChat: 'New Chat',
     noSessions: 'No sessions',
@@ -350,11 +359,13 @@ const translations: Record<string, Record<string, string>> = {
     confirm: 'Confirm',
     deleteLastSession: 'Cannot delete the last session',
     sessionNamePlaceholder: 'Enter session name...',
-    // Agent related
     input: 'Input',
     output: 'Output',
     agentThinking: 'Thinking...',
     agentCallingTool: 'Calling tool...',
+    streamingStep: 'Running',
+    streamingDone: 'Done',
+    errorDefault: 'Request failed. Please try again.',
   },
 }
 
@@ -522,13 +533,34 @@ const switchSession = async (sessionId: string) => {
   currentSessionId.value = sessionId
   localStorage.setItem('ai-chat-current-session', sessionId)
   messages.value = []
-  initWelcome()
 
   try {
     const res = await axios.get(`http://localhost:8000/sessions/${sessionId}/history`)
-    messages.value = res.data.history || []
-  } catch {
-    // 新会话没有历史，正常
+    const history = res.data.messages || []
+    if (history.length === 0) {
+      initWelcome()
+    } else {
+      messages.value = history
+    }
+
+    // 同步更新 session metadata (message_count)
+    const session = sessions.value.find((s) => s.id === sessionId)
+    if (session) {
+      session.message_count = history.length
+      if (history.length > 0) {
+        const firstUser = history.find((m: Message) => m.role === 'user')
+        if (firstUser) {
+          session.preview = firstUser.content.length > 30
+            ? firstUser.content.substring(0, 30) + '...'
+            : firstUser.content
+        }
+      }
+      session.updated_at = new Date().toISOString()
+      saveSessions()
+    }
+  } catch (err) {
+    console.error('加载会话历史失败:', err)
+    initWelcome()
   }
 
   await nextTick()
@@ -605,36 +637,78 @@ const confirmDelete = async () => {
 }
 
 // 发送消息
-const sendMessage = async () => {
+const sendMessageStream = async () => {
   if (!userInput.value.trim() || isLoading.value) return
 
   const query = userInput.value.trim()
   userInput.value = ''
 
   messages.value.push({ role: 'user', content: query })
+  isLoading.value = true
 
-  // 更新当前会话的 preview
+  // 创建占位的 assistant 消息
+  const assistantMsg: Message = { role: 'assistant', content: '', steps: [] }
+  messages.value.push(assistantMsg)
+  const msgIndex = messages.value.length - 1
+
+  // 更新会话 preview
   if (currentSessionId.value) {
     const session = sessions.value.find((s) => s.id === currentSessionId.value)
     if (session) {
       session.preview = query.length > 30 ? query.substring(0, 30) + '...' : query
-      session.message_count = messages.value.length
       session.updated_at = new Date().toISOString()
-      saveSessions()
     }
   }
 
-  isLoading.value = true
-
   try {
-    const res = await axios.post('http://localhost:8000/ask', {
-      query,
-      session_id: currentSessionId.value,
+    const response = await fetch(`http://localhost:8000/ask?stream=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, session_id: currentSessionId.value }),
     })
-    const { intent, response } = res.data
-    messages.value.push({ role: 'assistant', content: response, intent })
 
-    // 更新消息计数
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      let eventType = ''
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim()
+        } else if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6)
+          try {
+            const data = JSON.parse(dataStr)
+            handleSSEEvent(msgIndex, eventType, data)
+          } catch {
+            // 纯文本 token
+            if (eventType === 'token') {
+              messages.value[msgIndex].content += dataStr
+              await nextTick()
+            }
+          }
+          eventType = ''
+        }
+      }
+    }
+  } catch (error: any) {
+    messages.value[msgIndex].content = error.message || t('errorDefault')
+  } finally {
+    isLoading.value = false
+    messages.value[msgIndex].steps = [...streamingSteps.value]
+    streamingSteps.value = []
+
+    // 更新会话计数
     if (currentSessionId.value) {
       const session = sessions.value.find((s) => s.id === currentSessionId.value)
       if (session) {
@@ -643,13 +717,41 @@ const sendMessage = async () => {
         saveSessions()
       }
     }
-  } catch (error: any) {
-    const errorMsg = error?.response?.data?.detail || error.message || '请求失败，请稍后重试。'
-    messages.value.push({ role: 'assistant', content: errorMsg, intent: '错误' })
-  } finally {
-    isLoading.value = false
   }
 }
+
+// SSE 事件处理
+const streamingSteps = ref<AgentStep[]>([])
+
+const handleSSEEvent = (msgIndex: number, eventType: string, data: any) => {
+  switch (eventType) {
+    case 'token':
+      messages.value[msgIndex].content += data
+      break
+    case 'step':
+      streamingSteps.value.push({
+        thought: '',
+        tool: data.tool || 'unknown',
+        tool_input: data.input || '',
+        observation: '',
+      })
+      messages.value[msgIndex].steps = [...streamingSteps.value]
+      break
+    case 'step_done':
+      const last = streamingSteps.value[streamingSteps.value.length - 1]
+      if (last) {
+        last.observation = data.output || ''
+      }
+      messages.value[msgIndex].steps = [...streamingSteps.value]
+      break
+    case 'error':
+      messages.value[msgIndex].content += `\n\n[${t('errorDefault')}: ${data.message || ''}]`
+      break
+  }
+}
+
+// 发送消息 (入口)
+const sendMessage = () => sendMessageStream()
 
 // 加载文档
 const fetchDocuments = async () => {
@@ -1577,5 +1679,32 @@ onMounted(async () => {
   word-wrap: break-word;
   max-height: 120px;
   overflow-y: auto;
+}
+
+/* 流式光标 */
+.streaming-cursor {
+  display: inline-block;
+  animation: blink 1s step-end infinite;
+  color: #667eea;
+  font-size: 16px;
+  margin-left: 1px;
+  line-height: 1;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 流式步骤旋转指示器 */
+.step-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 12px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

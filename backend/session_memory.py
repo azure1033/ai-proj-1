@@ -18,6 +18,7 @@ MAX_TOKENS = 4000  # 约 16000 字符
 class Message(TypedDict):
     role: str  # "user" or "assistant"
     content: str
+    intent: str | None  # 意图标签，可选
 
 
 # 全局会话存储: Dict[session_id, List[Message]]
@@ -45,12 +46,15 @@ def get_or_create_session(session_id: str | None = None) -> str:
     return new_id
 
 
-def add_message(session_id: str, role: str, content: str) -> None:
+def add_message(session_id: str, role: str, content: str, intent: str | None = None) -> None:
     """添加消息到会话"""
     if session_id not in sessions:
         sessions[session_id] = []
         preferences[session_id] = {}
-    sessions[session_id].append(Message(role=role, content=content))
+    msg: Message = {"role": role, "content": content}
+    if intent:
+        msg["intent"] = intent
+    sessions[session_id].append(msg)
     
     # 如果有 session_manager，同步更新元数据
     try:
