@@ -6,6 +6,7 @@ import openai
 import os
 import json
 import shutil
+import logging
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -31,6 +32,9 @@ from session_manager import (
     delete_session,
 )
 from agent import run_agent, run_agent_stream
+from tools.rag_tool import set_rag_session
+
+logger = logging.getLogger(__name__)
 
 HISTORY_FILE = Path(__file__).parent / "chat_history.json"
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -236,7 +240,18 @@ def upload_document(file: UploadFile = File(...)):
         dest, filename = save_uploaded_file(file)
         text = extract_text_from_file(dest)
         document = append_document(filename, text)
-        return {"id": document["id"], "filename": filename, "uploaded_at": document["uploaded_at"]}
+        # RAG 入库
+        try:
+            from tools.rag_tool import ingest_document
+            set_rag_session("default")
+            session_id = "default"
+            chunk_count = ingest_document(text, {"doc_id": document["id"], "filename": filename}, session_id)
+            document["chunks"] = chunk_count if chunk_count >= 0 else 0
+            document["indexed"] = chunk_count >= 0
+        except Exception:
+            document["chunks"] = 0
+            document["indexed"] = False
+        return {"id": document["id"], "filename": filename, "uploaded_at": document["uploaded_at"], "chunks": document.get("chunks", 0), "indexed": document.get("indexed", False)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -245,7 +260,7 @@ def upload_document(file: UploadFile = File(...)):
 
 @app.get("/documents")
 def list_documents():
-    return {"documents": [{"id": d["id"], "filename": d["filename"], "uploaded_at": d["uploaded_at"]} for d in DOCUMENTS]}
+    return {"documents": [{"id": d["id"], "filename": d["filename"], "uploaded_at": d["uploaded_at"], "chunks": d.get("chunks", 0), "indexed": d.get("indexed", False)} for d in DOCUMENTS]}
 
 
 @app.delete("/documents")
@@ -254,11 +269,32 @@ def clear_documents():
     return {"status": "ok", "message": "文档已清空"}
 
 
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: str):
+    global DOCUMENTS
+    doc = next((d for d in DOCUMENTS if d["id"] == doc_id), None)
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    # 删除向量
+    try:
+        from tools.rag_tool import delete_document_vectors
+        delete_document_vectors(doc_id, "default")
+    except Exception as e:
+        logger.warning(f"删除文档向量失败: {e}")
+    # 删除原始文件
+    for f in UPLOAD_DIR.iterdir():
+        if doc_id in f.name:
+            f.unlink(missing_ok=True)
+    DOCUMENTS = [d for d in DOCUMENTS if d["id"] != doc_id]
+    return {"status": "ok", "message": "文档已删除", "doc_id": doc_id}
+
+
 @app.post("/ask")
 def ask(request: QueryRequest, stream: bool = Query(False)):
     """统一对话接口，支持流式和非流式"""
     session_id = get_or_create_session(request.session_id)
     add_message(session_id, "user", request.query)
+    set_rag_session(session_id)  # 设置 RAG 会话上下文
 
     if stream:
         # 流式响应 (SSE)
@@ -387,6 +423,12 @@ def delete_session_endpoint(session_id: str):
     success = delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在")
+    # 清理对应的 RAG 知识库
+    try:
+        from tools.rag_tool import delete_session_collection
+        delete_session_collection(session_id)
+    except Exception as e:
+        logger.warning(f"清理会话 RAG 数据失败: {e}")
     return {"status": "ok", "message": "会话已删除", "session_id": session_id}
 
 
@@ -401,6 +443,52 @@ def get_session_messages(session_id: str):
 def clear_history():
     save_history([])
     return {"status": "ok", "message": "聊天历史已清空"}
+
+
+class RagSettingsRequest(BaseModel):
+    embedding_model: str = "text2vec-base-chinese"
+    device: str = "cpu"
+    chunk_size: int = 384
+    chunk_overlap: int = 64
+    retrieval_k: int = 4
+    load_strategy: str = "lazy"
+
+
+@app.get("/rag/status")
+def get_rag_status(session_id: str = Query(..., description="会话ID")):
+    from tools.rag_tool import get_vector_store
+    try:
+        vs = get_vector_store(session_id)
+        count = vs._collection.count() if vs._collection else 0
+        total_chunks = count
+        return {
+            "session_id": session_id,
+            "document_count": len([d for d in DOCUMENTS if d.get("indexed")]),
+            "total_chunks": total_chunks,
+            "model_loaded": True,
+        }
+    except Exception as e:
+        return {
+            "session_id": session_id,
+            "document_count": 0,
+            "total_chunks": 0,
+            "model_loaded": False,
+            "error": str(e),
+        }
+
+
+@app.post("/rag/settings")
+def save_rag_settings(request: RagSettingsRequest):
+    from tools.rag_tool import save_rag_settings as _save_rag_settings
+    settings = request.model_dump()
+    _save_rag_settings(settings)
+    return {"status": "ok", "settings": settings}
+
+
+@app.get("/rag/settings")
+def get_rag_settings():
+    from tools.rag_tool import load_rag_settings
+    return load_rag_settings()
 
 
 @app.get("/")

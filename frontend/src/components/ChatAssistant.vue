@@ -59,6 +59,7 @@
             {{ item.label }}
           </button>
         </div>
+        <button class="settings-btn" @click="showSettings = true" title="设置">⚙️</button>
       </div>
     </header>
 
@@ -152,7 +153,7 @@
             {{ t('clearHistory') }}
           </button>
           <button class="action-btn" @click="toggleDocuments" :disabled="isLoading">
-            {{ t('uploadDocumentLabel') }}
+            📚 {{ locale === 'zh' ? '知识库' : 'Knowledge' }}
           </button>
         </div>
 
@@ -168,30 +169,11 @@
         </div>
       </div>
 
-      <!-- 文档上传面板 (可折叠) -->
-      <div v-if="showDocuments" class="documents-panel">
-        <div class="panel-header">
-          <h3>{{ t('uploadDocumentLabel') }}</h3>
-          <button class="close-btn" @click="showDocuments = false">×</button>
-        </div>
-        <div class="panel-content">
-          <input type="file" accept=".txt,.pdf,.docx" @change="handleFileChange" />
-          <button class="upload-btn" @click="uploadDocument" :disabled="!documentFile || isLoading">
-            {{ t('uploadButton') }}
-          </button>
-          <span class="upload-status">{{ uploadStatus }}</span>
-        </div>
-        <div v-if="documents.length > 0" class="document-list">
-          <h4>{{ t('docsLoaded') }}</h4>
-          <ul>
-            <li v-for="doc in documents" :key="doc.id">
-              <span class="doc-name">{{ doc.filename }}</span>
-              <button class="remove-btn" @click="removeDocument(doc.id)">×</button>
-            </li>
-          </ul>
-          <button class="clear-docs-btn" @click="clearDocuments">
-            {{ t('clearDocuments') }}
-          </button>
+      <!-- 知识库面板 (右侧滑出) -->
+      <div v-if="showDocuments" class="kb-overlay" @click.self="showDocuments = false">
+        <div class="kb-drawer">
+          <KnowledgePanel :sessionId="currentSessionId || ''" @documentChanged="onDocumentChanged" />
+          <button class="kb-close-btn" @click="showDocuments = false">✕</button>
         </div>
       </div>
     </section>
@@ -225,6 +207,9 @@
         </div>
       </div>
     </div>
+
+    <!-- 设置面板 -->
+    <SettingsModal :visible="showSettings" @close="showSettings = false" @saved="showSettings = false" />
   </div>
 </template>
 
@@ -232,6 +217,8 @@
 import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { marked } from 'marked'
 import axios from 'axios'
+import KnowledgePanel from './KnowledgePanel.vue'
+import SettingsModal from './SettingsModal.vue'
 
 // 配置 marked
 marked.setOptions({
@@ -411,11 +398,9 @@ const examples = computed(() => ({
 const userInput = ref('')
 const messages = ref<Message[]>([])
 const isLoading = ref(false)
-const documentFile = ref<File | null>(null)
-const documents = ref<Array<{ id: string; filename: string; uploaded_at: string }>>([])
-const uploadStatus = ref('')
 const messagesEndRef = ref<HTMLElement>()
 const showDocuments = ref(false)
+const showSettings = ref(false)
 
 // 会话状态
 const sessions = ref<Session[]>([])
@@ -440,6 +425,7 @@ const formatToolName = (tool: string): string => {
     translate_text: '🌐 ' + (locale.value === 'zh' ? '文本翻译' : 'Translate'),
     explain_code: '💻 ' + (locale.value === 'zh' ? '代码解释' : 'Code'),
     calculator: '🧮 ' + (locale.value === 'zh' ? '计算器' : 'Calculator'),
+    search_knowledge_base: '📚 ' + (locale.value === 'zh' ? '知识库检索' : 'Knowledge Base'),
   }
   return names[tool] || tool
 }
@@ -753,16 +739,6 @@ const handleSSEEvent = (msgIndex: number, eventType: string, data: any) => {
 // 发送消息 (入口)
 const sendMessage = () => sendMessageStream()
 
-// 加载文档
-const fetchDocuments = async () => {
-  try {
-    const res = await axios.get('http://localhost:8000/documents')
-    documents.value = res.data.documents || []
-  } catch {
-    documents.value = []
-  }
-}
-
 // 清空历史
 const clearHistory = async () => {
   try {
@@ -779,45 +755,9 @@ const toggleDocuments = () => {
   showDocuments.value = !showDocuments.value
 }
 
-// 文件选择
-const handleFileChange = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  if (target.files && target.files.length > 0) {
-    documentFile.value = target.files[0]
-  }
-}
-
-// 上传文档
-const uploadDocument = async () => {
-  if (!documentFile.value) return
-  const formData = new FormData()
-  formData.append('file', documentFile.value)
-  uploadStatus.value = '上传中...'
-  try {
-    await axios.post('http://localhost:8000/documents/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    uploadStatus.value = '✓ 上传成功'
-    documentFile.value = null
-    await fetchDocuments()
-  } catch (error: any) {
-    uploadStatus.value = error?.response?.data?.detail || '上传失败'
-  }
-}
-
-// 移除文档 (后端暂不支持单个删除)
-const removeDocument = async (_id: string) => {
-  // TODO: 后端支持后实现
-}
-
-// 清空文档
-const clearDocuments = async () => {
-  try {
-    await axios.delete('http://localhost:8000/documents')
-    documents.value = []
-  } catch (error) {
-    console.error('清除文档失败：', error)
-  }
+// 知识库文档变更回调
+const onDocumentChanged = () => {
+  // KnowledgePanel handles all document state internally
 }
 
 // 快捷提问
@@ -843,7 +783,20 @@ onMounted(async () => {
     }
   }
 
-  await fetchDocuments()
+  // 加载 RAG 设置
+  try {
+    const saved = localStorage.getItem('ai-rag-settings')
+    if (!saved) {
+      localStorage.setItem('ai-rag-settings', JSON.stringify({
+        embedding_model: 'text2vec-base-chinese',
+        device: 'cpu',
+        chunk_size: 384,
+        chunk_overlap: 64,
+        retrieval_k: 4,
+        load_strategy: 'lazy',
+      }))
+    }
+  } catch { /* ignore */ }
 })
 </script>
 
@@ -852,9 +805,11 @@ onMounted(async () => {
 .chat-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  flex: 1;
+  min-width: 0;
   background: #f8f9fa;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  position: relative;
 }
 
 /* 顶部栏 */
@@ -905,6 +860,23 @@ onMounted(async () => {
 
 .lang-btn:hover {
   background: #f9fafb;
+}
+
+.settings-btn {
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 8px;
+}
+
+.settings-btn:hover {
+  background: #f3f4f6;
+  color: #1f2937;
 }
 
 /* 消息区域 */
@@ -1376,6 +1348,62 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* 知识库面板 (右侧滑出) */
+.kb-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 300;
+  display: flex;
+  justify-content: flex-end;
+  animation: fadeIn 0.2s ease;
+}
+
+.kb-drawer {
+  width: 420px;
+  max-width: 90vw;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--bg, #fff);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+  animation: slideInRight 0.25s ease;
+  position: relative;
+}
+
+.kb-close-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #f3f4f6;
+  color: #6b7280;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.kb-close-btn:hover {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 /* 侧边栏 */
