@@ -90,4 +90,8 @@ if __name__ == "__main__":
             )
 
     logger.info("启动 MCP Server (transport=%s, port=%s)", transport, port)
-    mcp.run(transport=transport, host="0.0.0.0", port=port)
+
+    if transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        mcp.run(transport=transport, host="0.0.0.0", port=port)

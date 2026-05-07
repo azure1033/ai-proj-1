@@ -152,6 +152,12 @@
           <button class="action-btn" @click="clearHistory" :disabled="isLoading">
             {{ t('clearHistory') }}
           </button>
+          <button class="action-btn" @click="exportSession('md')" :title="t('exportMD')">
+            ⬇ {{ t('exportMD') }}
+          </button>
+          <button class="action-btn" @click="exportSession('txt')" :title="t('exportTXT')">
+            📄 {{ t('exportTXT') }}
+          </button>
           <button class="action-btn" @click="toggleDocuments" :disabled="isLoading">
             📚 {{ locale === 'zh' ? '知识库' : 'Knowledge' }}
           </button>
@@ -318,6 +324,8 @@ const translations: Record<string, Record<string, string>> = {
     streamingStep: '正在执行',
     streamingDone: '完成',
     errorDefault: '请求失败，请稍后重试。',
+    exportMD: '导出 MD',
+    exportTXT: '导出 TXT',
   },
   en: {
     title: 'AI Assistant',
@@ -353,6 +361,8 @@ const translations: Record<string, Record<string, string>> = {
     streamingStep: 'Running',
     streamingDone: 'Done',
     errorDefault: 'Request failed. Please try again.',
+    exportMD: 'Export MD',
+    exportTXT: 'Export TXT',
   },
 }
 
@@ -753,6 +763,106 @@ const clearHistory = async () => {
 // 切换文档面板
 const toggleDocuments = () => {
   showDocuments.value = !showDocuments.value
+}
+
+// 生成导出文件名
+const generateExportFilename = (format: string): string => {
+  const session = sessions.value.find(s => s.id === currentSessionId.value)
+  const name = (session?.name || '新会话').replace(/[<>:"/\\|?*\s]+/g, '-').replace(/-+$/, '')
+  const now = new Date()
+  const ts = now.getFullYear().toString() +
+    String(now.getMonth() + 1).padStart(2, '0') +
+    String(now.getDate()).padStart(2, '0') + '-' +
+    String(now.getHours()).padStart(2, '0') +
+    String(now.getMinutes()).padStart(2, '0') +
+    String(now.getSeconds()).padStart(2, '0')
+  return `AI会话-${name}-${ts}.${format}`
+}
+
+// 导出当前会话
+const exportSession = (format: 'md' | 'txt') => {
+  const session = sessions.value.find(s => s.id === currentSessionId.value)
+  const now = new Date().toLocaleString('zh-CN')
+
+  // 元数据头
+  let content = ''
+  if (format === 'md') {
+    content += `# AI 智能助手 - 会话记录\n\n`
+    content += `**会话名称**: ${session?.name || '新会话'}\n`
+    content += `**导出时间**: ${now}\n`
+    content += `**消息数量**: ${messages.value.length}\n\n---\n\n`
+  } else {
+    content += `AI 智能助手 - 会话记录\n`
+    content += `会话名称: ${session?.name || '新会话'}\n`
+    content += `导出时间: ${now}\n`
+    content += `消息数量: ${messages.value.length}\n`
+    content += `${'='.repeat(50)}\n\n`
+  }
+
+  for (const msg of messages.value) {
+    const rolePrefix = msg.role === 'user' ? '👤 用户' : '🤖 AI'
+    const intentTag = msg.intent ? ` · ${intentLabel(msg.intent).replace(/[🌤️💬📝🌐💻📄❌]/g, '').trim()}` : ''
+
+    if (format === 'md') {
+      // Markdown 格式
+      content += `### ${rolePrefix}${intentTag}\n\n`
+
+      // Agent 步骤 (折叠)
+      if (msg.steps && msg.steps.length > 0) {
+        for (const step of msg.steps) {
+          content += `<details>\n`
+          content += `<summary>🔧 调用工具: ${step.tool}</summary>\n\n`
+          content += `- **输入**: ${step.tool_input}\n`
+          if (step.observation) {
+            content += `- **输出**: ${step.observation}\n`
+          }
+          content += `\n</details>\n\n`
+        }
+      }
+
+      // 消息正文 (保留原始 Markdown)
+      if (msg.content) {
+        content += msg.content + '\n\n'
+      }
+      content += '---\n\n'
+    } else {
+      // TXT 格式
+      content += `[${rolePrefix}${intentTag}]\n`
+
+      if (msg.steps && msg.steps.length > 0) {
+        for (const step of msg.steps) {
+          content += `  [工具] ${step.tool}\n`
+          content += `    输入: ${step.tool_input}\n`
+          if (step.observation) {
+            const obsLines = step.observation.split('\n')
+            for (const line of obsLines) {
+              content += `    输出: ${line}\n`
+            }
+          }
+        }
+      }
+
+      if (msg.content) {
+        const textLines = msg.content.split('\n')
+        for (const line of textLines) {
+          content += line + '\n'
+        }
+      }
+      content += '\n' + '-'.repeat(40) + '\n\n'
+    }
+  }
+
+  // 触发下载
+  const mimeType = format === 'md' ? 'text/markdown' : 'text/plain'
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = generateExportFilename(format)
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // 知识库文档变更回调
