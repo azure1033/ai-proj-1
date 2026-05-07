@@ -302,6 +302,64 @@ A:
 - 📂 **多会话管理** - 侧边栏切换，重命名/删除，历史持久化
 - 🧠 **上下文记忆** - 会话记忆 + 上下文窗口 + 用户偏好
 - 🔍 **网页搜索** - Tavily API / DuckDuckGo 实时信息获取
+- 🔌 **MCP Server** - 将 7 个工具以 MCP 协议暴露，兼容 Claude Desktop / Cursor 等客户端
+
+## 🔌 MCP Server 使用
+
+MCP Server 将项目的 7 个 AI 工具以标准 MCP 协议暴露，让 Claude Desktop、Cursor、Continue.dev 等 MCP 客户端可以直接调用。
+
+### 启动方式
+
+```bash
+# stdio 模式（默认，Claude Desktop 使用）
+cd backend
+python -m mcp_server
+
+# streamable-http 模式（远程访问）
+python -m mcp_server --transport streamable-http --port 8765
+```
+
+### Claude Desktop 配置
+
+在 `%APPDATA%\Claude\claude_desktop_config.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "ai-assistant": {
+      "command": "python",
+      "args": ["-m", "backend.mcp_server"],
+      "cwd": "F:/code/ai-proj"
+    }
+  }
+}
+```
+
+重启 Claude Desktop 后，对话中即可调用天气查询、网页搜索、知识库检索等工具。
+
+### streamable-http 认证
+
+在 `.env` 中设置 `MCP_API_KEY` 可启用 Bearer Token 认证：
+
+```bash
+MCP_API_KEY=your-secret-key
+```
+
+未设置时服务器会打印警告但仍可访问。
+
+### 暴露的工具
+
+| MCP Tool | 功能 | 参数 |
+|----------|------|------|
+| `get_weather` | 天气查询 + 穿衣建议 | 城市名称 |
+| `web_search` | 互联网搜索 | 搜索关键词 |
+| `search_knowledge_base` | 知识库语义检索 | 查询文本 |
+| `summarize_text` | 文本总结 | 文本内容 |
+| `translate_text` | 英→中翻译 | 外文文本 |
+| `explain_code` | 代码解释 | 代码片段 |
+| `calculator` | 数学计算 | 数学表达式 |
+
+---
 
 ## 📝 最后更新
 
@@ -326,4 +384,4 @@ A:
 | P3 | 对话安全 | 🔜 待规划 | Prompt Injection 防护、内容审查 |
 | P4 | 可观测性 | 🔜 待规划 | Token 统计、延迟监控、Dashboard |
 | P5 | 用户系统 | 🔜 待规划 | JWT 认证、多租户、用量配额 |
-| P6 | MCP 服务器 | 🔜 待规划 | 将项目能力以 MCP 协议暴露 |
+| ~~P6~~ | ~~MCP 服务器~~ | ✅ 已实现 | 将项目能力以 MCP 协议暴露（7 工具，stdio + streamable-http）

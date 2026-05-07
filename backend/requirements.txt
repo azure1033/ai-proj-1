@@ -17,3 +17,4 @@ langchain-chroma>=0.1.2
 langchain-huggingface
 sentence_transformers
 zhipuai
+fastmcp

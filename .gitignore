@@ -5,3 +5,10 @@ node_modules/
 .vscode/
 .venv/
 *.log
+.opencode
+.sisyphus
+test.json
+
+backend/chat_history.json
+backend/uploads
+backend/chroma_db
