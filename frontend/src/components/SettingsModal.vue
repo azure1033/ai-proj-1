@@ -177,7 +177,7 @@
 
 <script setup lang="ts">
 import { reactive, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import api from '../api'
 
 // ── 类型定义 ──────────────────────────────────────────
 interface RagSettings {
@@ -237,7 +237,7 @@ const persistToStorage = (): void => {
 // ── 同步到后端 ────────────────────────────────────────
 const syncToBackend = async (): Promise<void> => {
   try {
-    await axios.post('http://localhost:8000/rag/settings', { ...settings })
+    await api.post('rag/settings', { ...settings })
   } catch (err) {
     console.error('同步 RAG 设置到后端失败:', err)
   }

@@ -222,7 +222,7 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { marked } from 'marked'
-import axios from 'axios'
+import api from '../api'
 import KnowledgePanel from './KnowledgePanel.vue'
 import SettingsModal from './SettingsModal.vue'
 
@@ -531,7 +531,7 @@ const switchSession = async (sessionId: string) => {
   messages.value = []
 
   try {
-    const res = await axios.get(`http://localhost:8000/sessions/${sessionId}/history`)
+    const res = await api.get(`sessions/${sessionId}/history`)
     const history = res.data.messages || []
     if (history.length === 0) {
       initWelcome()
@@ -580,7 +580,7 @@ const confirmRename = async () => {
     session.updated_at = new Date().toISOString()
     saveSessions()
     try {
-      await axios.patch(`http://localhost:8000/sessions/${renameTargetId.value}`, {
+      await api.patch(`sessions/${renameTargetId.value}`, {
         name: renameInput.value.trim(),
       })
     } catch {
@@ -615,7 +615,7 @@ const confirmDelete = async () => {
   saveSessions()
 
   try {
-    await axios.delete(`http://localhost:8000/sessions/${deleteTargetId.value}`)
+    await api.delete(`sessions/${deleteTargetId.value}`)
   } catch {
     // 静默失败
   }
@@ -657,7 +657,8 @@ const sendMessageStream = async () => {
   }
 
   try {
-    const response = await fetch(`http://localhost:8000/ask?stream=true`, {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+    const response = await fetch(`${apiBase}/ask?stream=true`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, session_id: currentSessionId.value }),
@@ -752,7 +753,7 @@ const sendMessage = () => sendMessageStream()
 // 清空历史
 const clearHistory = async () => {
   try {
-    await axios.delete('http://localhost:8000/history')
+    await api.delete('history')
     messages.value = []
     initWelcome()
   } catch (error) {

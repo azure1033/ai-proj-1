@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# 数据目录（通过 volume 挂载，不打包进镜像）
+chroma_db/
+uploads/
+chat_history.json
+
+# IDE
+.vscode/
+.idea/
+
+# 环境文件（通过 docker-compose env_file 注入）
+.env
+.env.*
+!.env.example
+
+# Git
+.git/
+.gitignore
+
+# 测试
+test_*.py
+tests/

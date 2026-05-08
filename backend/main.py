@@ -113,7 +113,12 @@ app = FastAPI(title="AI 智能问答助手", description="基于大语言模型�
 # 添加CORS中间件，允许前端跨域请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5175"],
+    allow_origins=[
+        "http://localhost:5173",   # Vite dev server
+        "http://localhost:5175",   # Vite dev server (alt port)
+        "http://localhost",        # Docker nginx on host
+        "http://frontend",         # Docker internal service name
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -145,7 +145,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import axios from 'axios'
+import api from '../api'
 
 /* ========== 类型定义 ========== */
 
@@ -233,8 +233,8 @@ function getIndexStatusText(doc: Document): string {
 
 async function fetchKnowledgeBaseStatus() {
   try {
-    const res = await axios.get<KnowledgeBaseStatus>(
-      `http://localhost:8000/rag/status?session_id=${encodeURIComponent(props.sessionId)}`
+    const res = await api.get<KnowledgeBaseStatus>(
+      `rag/status?session_id=${encodeURIComponent(props.sessionId)}`
     )
     kbStatus.value = res.data
   } catch {
@@ -245,7 +245,7 @@ async function fetchKnowledgeBaseStatus() {
 async function fetchDocuments() {
   docListState.value = 'loading'
   try {
-    const res = await axios.get<{ documents: Document[] }>('http://localhost:8000/documents')
+    const res = await api.get<{ documents: Document[] }>('documents')
     documents.value = res.data.documents || []
     docListState.value = 'loaded'
   } catch {
@@ -267,7 +267,7 @@ async function uploadFile(file: File) {
   formData.append('file', file)
 
   try {
-    await axios.post('http://localhost:8000/documents/upload', formData, {
+    await api.post('documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (event) => {
         if (event.total && event.total > 0) {
@@ -291,7 +291,7 @@ async function uploadFile(file: File) {
 async function deleteDocument(docId: string) {
   deletingId.value = docId
   try {
-    await axios.delete(`http://localhost:8000/documents/${docId}`)
+    await api.delete(`documents/${docId}`)
     documents.value = documents.value.filter((d) => d.id !== docId)
   } catch {
     // 即使后端失败，前端也先移除（乐观更新）

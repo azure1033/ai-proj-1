@@ -11,10 +11,10 @@ python-docx
 python-multipart
 tavily-python
 ddgs
-duckduckgo-search
-chromadb>=0.4.0
+chromadb
 langchain-chroma>=0.1.2
-langchain-huggingface
-sentence_transformers
+# === 仅 EMBEDDING_PROVIDER=local 时需要（会安装 PyTorch ~2GB）===
+# langchain-huggingface
+# sentence_transformers
 zhipuai
 fastmcp
