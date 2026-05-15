@@ -29,7 +29,14 @@ jobs:
           script: |
             set -e
             APP_DIR="${{ secrets.DEPLOY_PATH || '/opt/ai-proj' }}"
-            COMPOSE="docker compose -f $APP_DIR/docker-compose.prod.yml"
+
+            # Auto-detect compose command (Docker v2+ uses "docker compose", older uses "docker-compose")
+            if docker compose version &>/dev/null; then
+              COMPOSE="docker compose"
+            else
+              COMPOSE="docker-compose"
+            fi
+            COMPOSE="$COMPOSE -f $APP_DIR/docker-compose.prod.yml"
 
             echo "=== Deploying commit ${{ github.sha }} ==="
             cd "$APP_DIR"
