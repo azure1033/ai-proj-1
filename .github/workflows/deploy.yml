@@ -50,13 +50,8 @@ jobs:
             echo "=== Pulling latest images ==="
             $COMPOSE pull
 
-            echo "=== Restarting services (with health check wait) ==="
-            $COMPOSE up -d --wait --remove-orphans || {
-              echo "=== DEPLOY FAILED — rolling back backend ==="
-              docker pull ai-proj-backend:rollback 2>/dev/null || true
-              $COMPOSE up -d backend 2>/dev/null || true
-              exit 1
-            }
+            echo "=== Restarting services ==="
+            $COMPOSE up -d --remove-orphans
 
             echo "=== Cleaning up old images ==="
             docker image prune -f

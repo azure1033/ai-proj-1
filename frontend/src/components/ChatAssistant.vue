@@ -657,8 +657,7 @@ const sendMessageStream = async () => {
   }
 
   try {
-    const apiBase = import.meta.env.VITE_API_BASE_URL || ''
-    const response = await fetch(`${apiBase}/ask?stream=true`, {
+    const response = await fetch(`/api/ask?stream=true`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, session_id: currentSessionId.value }),

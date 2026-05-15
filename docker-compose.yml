@@ -1,4 +1,26 @@
 services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: ai_chat
+      MYSQL_USER: ai_chat_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-chat123}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+
   backend:
     build:
       context: ./backend
@@ -6,25 +28,41 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - USE_MYSQL=true
+      - DATABASE_URL=mysql+aiomysql://ai_chat_user:${MYSQL_PASSWORD:-chat123}@mysql:3306/ai_chat
     volumes:
+      # 源码挂载（修改后自动热重载，免 rebuild）
+      - ./backend:/app
       # 数据持久化
       - ./backend/chroma_db:/app/chroma_db
       - ./backend/uploads:/app/uploads
-      - ./backend/chat_history.json:/app/chat_history.json
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --reload
+    depends_on:
+      mysql:
+        condition: service_healthy
     networks:
       - app-network
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: node:22-alpine
     restart: unless-stopped
+    working_dir: /app
     ports:
-      - "8080:80"
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=/api
+    volumes:
+      # 源码挂载（HMR 热更新，免 rebuild）
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     depends_on:
       - backend
     networks:
       - app-network
+
+volumes:
+  mysql_data:
 
 networks:
   app-network:

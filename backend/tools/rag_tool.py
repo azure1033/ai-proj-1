@@ -19,7 +19,7 @@ from langchain.tools import BaseTool
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from model_config import get_embedding_function, EMBEDDING_PROVIDER
+from provider_manager import get_provider_manager
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,8 @@ DEFAULT_SETTINGS: dict = {
 
 
 def get_embeddings():
-    """获取嵌入模型实例（委托给 model_config.get_embedding_function）
-
-    Returns:
-        Embeddings: 当前 Provider 的嵌入模型实例
-    """
-    return get_embedding_function()
+    """获取嵌入模型实例（委托给 provider_manager）"""
+    return get_provider_manager().get_active_embedding()
 
 
 # ==================== 中文文本分割器 ====================
@@ -135,7 +131,8 @@ def get_vector_store(session_id: str) -> Chroma:
     Returns:
         Chroma: 会话专属的向量存储实例
     """
-    suffix = {"zhipu": "", "local": "_local", "siliconflow": "_sf"}.get(EMBEDDING_PROVIDER, "")
+    embedding_id = get_provider_manager().get_active_embedding_id()
+    suffix = f"_{embedding_id}" if embedding_id else ""
     collection_name = f"rag_{session_id}{suffix}"
     return Chroma(
         collection_name=collection_name,

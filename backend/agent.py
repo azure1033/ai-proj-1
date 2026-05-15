@@ -14,7 +14,7 @@ from typing import AsyncGenerator
 
 from langchain.agents import create_agent
 
-from model_config import get_langchain_llm
+from provider_manager import get_provider_manager
 from tools import get_all_tools
 
 # Agent 配置
@@ -61,7 +61,7 @@ def _create_agent_executor():
 
     返回 CompiledStateGraph，通过 invoke/stream 调用
     """
-    llm = get_langchain_llm()
+    llm = get_provider_manager().get_active_llm_config()
     tools = get_all_tools()
 
     agent = create_agent(

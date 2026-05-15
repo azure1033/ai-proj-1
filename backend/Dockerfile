@@ -2,6 +2,10 @@
 FROM python:3.12-slim AS builder
 WORKDIR /build
 
+# 切换 apt 源到清华镜像（解决国内网络问题）
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+
 # 安装编译依赖（部分 Python 包需要 gcc）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libc6-dev && \
