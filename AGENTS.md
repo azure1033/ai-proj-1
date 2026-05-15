@@ -1,139 +1,132 @@
-# AGENTS.md - AI 智能问答助手
+# PROJECT KNOWLEDGE BASE
 
-## 项目概述
+**Generated:** 2026-05-15
+**Commit:** d659833
+**Branch:** master
 
-**AI 智能问答助手** - 基于大语言模型的智能对话系统，支持意图识别和统一聊天界面。
+## OVERVIEW
 
-- **后端**: Python + FastAPI + LangChain + DeepSeek-V2.5
-- **前端**: Vue3 + Vite + TypeScript
-- **数据源**: Open-Meteo API (天气)
+AI 智能问答助手 — LLM-powered chatbot with Tool-Calling Agent (7 tools), RAG knowledge base, SSE streaming, multi-session management, and MCP server.
 
-## 开发命令
+- **Backend**: Python + FastAPI + LangChain 1.x + **Zhipu AI `glm-4-flash`** (default) + ChromaDB
+- **Frontend**: Vue3 + Vite + TypeScript (no Pinia, no router, no CSS framework)
+- **Deploy**: Docker Compose (mysql + backend + frontend + nginx)
 
-### 后端 (端口 8000)
+## STRUCTURE
+
+```
+./
+├── backend/              # FastAPI app: main.py (routes+RAG), agent.py, tools/, model_config.py
+├── backend/tools/        # 7 LangChain BaseTool subclasses (weather, search, RAG, text, calc)
+├── frontend/             # Vue3 SPA: ChatAssistant.vue (monolith), KnowledgePanel, SettingsModal
+├── openspec/             # Artifact-driven change management (~70 md files)
+├── db/                   # MySQL init.sql (sessions, messages, model_providers)
+├── docker-compose.yml    # 3-service orchestration (mysql + backend + frontend)
+└── .env                  # LLM_PROVIDER, ZHIPU_API_KEY, database config
+```
+
+## WHERE TO LOOK
+
+| Task | Location | Notes |
+|------|----------|-------|
+| **Add API route** | `backend/main.py` | All routes in one file (700+ lines); no `routers/` dir |
+| **Add Agent tool** | `backend/tools/` → `__init__.py` `get_all_tools()` | Subclass `BaseTool`, define `_run()` |
+| **Switch LLM Provider** | `.env` `LLM_PROVIDER=` or DB `model_providers` | Static: `model_config.py`; Dynamic: `provider_manager.py` |
+| **Modify RAG pipeline** | `backend/tools/rag_tool.py` | ChromaDB, Chinese splitting, session-isolated collections |
+| **Modify chat UI** | `frontend/src/components/ChatAssistant.vue` | 1800+ line monolith: SSE, sessions, i18n, markdown |
+| **Modify knowledge panel** | `frontend/src/components/KnowledgePanel.vue` | Drag-drop upload, progress bar, document list |
+| **Modify settings** | `frontend/src/components/SettingsModal.vue` | Provider switching, RAG parameter sliders |
+| **Change session storage** | `backend/session_store.py` | Dual-mode: MySQL (aiomysql) or in-memory dict |
+| **Change management workflow** | `openspec/` | Proposals → designs → specs → tasks → archive |
+| **MCP server** | `backend/mcp_server.py` | 7 tools exposed via stdio or streamable-http |
+
+## CODE MAP
+
+| Symbol | Type | Location | Role |
+|--------|------|----------|------|
+| `app` | FastAPI | `backend/main.py:114` | Main app instance, all routes registered here |
+| `ask()` | Route | `backend/main.py:372` | Unified chat endpoint, supports `?stream=true` SSE |
+| `run_agent()` | Function | `backend/agent.py` | Synchronous agent execution (5 iter max, 30s timeout) |
+| `run_agent_stream()` | Generator | `backend/agent.py` | SSE streaming agent execution |
+| `get_all_tools()` | Factory | `backend/tools/__init__.py` | Returns 7 LangChain BaseTool instances |
+| `get_openai_client()` | Factory | `backend/model_config.py` | OpenAI-compatible client from `.env` |
+| `get_provider_manager()` | Singleton | `backend/provider_manager.py` | Runtime provider switching (DB-backed) |
+| `api` | Axios | `frontend/src/api.ts` | API client, `baseURL: '/api'` |
+
+## CONVENTIONS
+
+### Backend
+- **Tools**: Subclass `BaseTool`, define `_run()`/`_arun()`. Register in `tools/__init__.py` `get_all_tools()`.
+- **Tool errors**: Return error strings — do NOT raise exceptions. `return f"失败: {str(e)}"`.
+- **Storage**: `USE_MYSQL=true` → async MySQL (aiomysql); unset → in-memory dict. Check `is_mysql_enabled()`.
+- **API keys**: Fernet encrypted in DB (`encryption.py`). Key auto-generated on first run into `.env`.
+- **RAG**: Collections named `rag_{session_id}_{embedding_id_suffix}`, isolated via `contextvars`.
+- **Degradation**: Tavily → DuckDuckGo (search); Zhipu → local(text2vec) → SiliconFlow (embeddings).
+- **SSE**: `event: type\ndata: {}\n\n`. Headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
+- **CORS**: Explicit allowlist (`localhost:5173`, `5175`, `localhost`, `frontend`), `allow_credentials=True`.
+
+### Frontend
+- **No Pinia/Pinia**: All state in component-local `ref()`/`reactive()`, persisted to `localStorage`.
+- **No Vue Router**: Single-page; `App.vue` renders only `<ChatAssistant />`.
+- **i18n**: Manual `translations` object (zh/en), `t(key)` helper. No vue-i18n package.
+- **SSE**: Manual `fetch` + `ReadableStream` parsing (not EventSource API).
+- **Styling**: CSS variables + `prefers-color-scheme: dark`. No Tailwind/Bootstrap.
+- **TypeScript**: Strict mode, `erasableSyntaxOnly`, `noUnusedLocals`, `noUnusedParameters`.
+
+## ANTI-PATTERNS (THIS PROJECT)
+
+- **DO NOT** call `get_openai_client()` or `get_langchain_llm()` at module level — lazy-init in `_run()`. `tools/text_tools.py:9` and `weather_agent.py:13` violate this.
+- **DO NOT** hardcode MySQL credentials in source — `database.py:19` fallback has live credentials.
+- **DO NOT** commit `.env` files — `.gitignore` covers `.env` but verify before `git add -f`.
+- **DO NOT** import from `session_memory.py` or `session_manager.py` — use `session_store.py`. Old files are compatibility shims.
+- **DO NOT** use `provider_manager.get_active_embedding_id()` — method has dead code after `return` on line 56.
+- **No test framework exists** — manual testing only. Do not expect `pytest` or `vitest` to work.
+
+## COMMANDS
+
+### Backend (port 8000)
 ```bash
 cd backend
+pip install -r requirements.txt
 python -m uvicorn main:app --reload --port 8000
 ```
 
-### 前端 (端口 5173)
+### Frontend (port 5173)
 ```bash
 cd frontend
-npm run dev
+npm install
+npm run dev        # Development with HMR
+npm run build      # Production: vue-tsc + vite build
 ```
 
-### 测试 API
+### Docker
 ```bash
-curl -X POST "http://localhost:8000/ask" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"今天北京天气如何"}'
+docker compose up       # mysql + backend + frontend (with HMR)
+docker compose build    # Rebuild images
 ```
 
-## API 接口
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/ask` | POST | 统一对话接口 (推荐) |
-| `/weather` | POST | 独立天气查询 |
-| `/documents/upload` | POST | 文档上传 (txt/pdf/docx) |
-| `/documents` | GET | 列出已上传文档 |
-| `/history` | GET | 获取聊天历史 |
-
-**请求格式**:
-```json
-{"query": "今天合肥热不热，需要穿外套吗？"}
-```
-
-**响应格式**:
-```json
-{"intent": "天气查询", "response": "城市: 合肥\n天气: 晴朗\n..."}
-```
-
-## 支持的意图类型
-
-1. **天气查询** - 询问天气、温度、穿衣建议等
-2. **问答** - 知识型问题回答
-3. **总结** - 长文本内容总结
-4. **翻译** - 多语言文本翻译
-5. **代码解释** - 代码逻辑解释
-6. **文档问答** - 上传文档后自动启用
-
-## 意图分类逻辑
-
-- **天气关键词快速匹配** (<250ms): 包含"天气"、"温度"、"热"、"冷"、"下雨"、"穿"、"风"等关键词
-- **LLM 备选分类** (1-2s): 非天气查询使用 DeepSeek-V2.5 分类
-
-## 天气功能
-
-- **支持城市**: 50+ 中国主要城市 (中文/英文)
-- **数据源**: Open-Meteo API (免费，无需 API Key)
-- **回复内容**: 城市、天气、温度、湿度、风速、空气质量 + 生活建议
-
-## 环境配置
-
-`.env` 文件 (项目根目录):
-```
-DEEPSEEK_API_KEY=sk-xxx  # 从 https://www.siliconflow.cn/ 获取
-```
-
-## CORS 配置
-
-后端允许的源:
-- `http://localhost:5173` (前端开发服务器)
-- `http://localhost:5175` (备用端口)
-
-## 核心文件
-
-| 文件 | 说明 |
-|------|------|
-| `backend/main.py` | FastAPI 应用、意图分类、路由 |
-| `backend/weather_agent.py` | 天气工具、城市坐标、建议生成 |
-| `frontend/src/components/ChatAssistant.vue` | 统一聊天界面组件 |
-| `frontend/src/App.vue` | 主应用组件 |
-
-## 测试用例
-
+### MCP Server
 ```bash
-# 天气查询
-curl -X POST "http://localhost:8000/ask" -H "Content-Type: application/json" -d '{"query":"今天合肥热不热"}'
-
-# 问答
-curl -X POST "http://localhost:8000/ask" -H "Content-Type: application/json" -d '{"query":"什么是LangChain"}'
-
-# 翻译
-curl -X POST "http://localhost:8000/ask" -H "Content-Type: application/json" -d '{"query":"请翻译：Hello world"}'
-
-# 总结
-curl -X POST "http://localhost:8000/ask" -H "Content-Type: application/json" -d '{"query":"请总结：人工智能是..."}'
+cd backend
+python -m mcp_server                              # stdio (Claude Desktop)
+python -m mcp_server --transport streamable-http --port 8765  # HTTP
+python test_mcp.py                                # Integration test
 ```
 
-## 故障排查
-
-- **前端显示"连接失败"**: 检查后端是否运行在 localhost:8000
-- **意图识别错误**: 确保输入包含明确的关键词，或等待 LLM 分类 (1-2s)
-- **天气查询失败**: 检查网络连接，确认城市在支持列表中
-
-## 依赖安装
-
+### Tests (manual only)
 ```bash
-# 后端
-cd backend && pip install -r requirements.txt
-
-# 前端
-cd frontend && npm install
+# API smoke test
+curl -X POST "http://localhost:8000/ask" -H "Content-Type: application/json" -d '{"query":"今天北京天气如何"}'
+# MCP integration test
+cd backend && python test_mcp.py
 ```
 
-## 已安装的 npm 包
+## NOTES
 
-- `vue`: ^3.5.30
-- `axios`: ^1.14.0
-- `vite`: ^8.0.1
-- `typescript`: ~5.9.3
-- `vue-tsc`: ^3.2.5
-
-## 文档
-
-- `README.md` - 项目说明
-- `INTEGRATION_GUIDE.md` - 集成指南
-- `TEST_GUIDE.md` - 测试指南
-- `COMPLETION_SUMMARY.md` - 完成总结
+- **Provider default is Zhipu** (not DeepSeek as old docs stated). Switch via `LLM_PROVIDER=` in `.env` or DB `model_providers`.
+- **Two `.env` files**: Root (LLM_PROVIDER, ZHIPU_API_KEY) and `backend/` (DEEPSEEK_API_KEY). `model_config.py` reads root via `Path(__file__).parent.parent / ".env"`.
+- **Session modules merging**: `session_memory.py` + `session_manager.py` → `session_store.py`. See `openspec/changes/merge-session-modules/`.
+- **No CI/CD, no linter, no test framework** — infrastructure needs setup from scratch.
+- **MCP HTTP has no auth enforcement** — only warns if `MCP_API_KEY` not set.
+- **Dead code**: `provider_manager.py:56-59` `get_active_embedding_id()` has unreachable code after `return`.
+- **Sub-AGENTS.md**: See `backend/AGENTS.md`, `backend/tools/AGENTS.md`, `frontend/AGENTS.md`, `openspec/AGENTS.md`.
