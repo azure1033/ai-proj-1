@@ -1,0 +1,59 @@
+name: Deploy to Production
+
+on:
+  workflow_run:
+    workflows: ["Docker Build & Push"]
+    types: [completed]
+    branches: [master]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT || '' }}
+          command_timeout: 15m
+          script_stop: true
+          script: |
+            set -e
+            APP_DIR="${{ secrets.DEPLOY_PATH || '/opt/ai-proj' }}"
+            COMPOSE="docker compose -f $APP_DIR/docker-compose.prod.yml"
+
+            echo "=== Deploying commit ${{ github.sha }} ==="
+            cd "$APP_DIR"
+
+            # Tag current backend image for rollback (in case new version fails health check)
+            CURRENT_IMG=$(docker inspect --format='{{.Config.Image}}' ai-proj-backend-1 2>/dev/null || true)
+            if [ -n "$CURRENT_IMG" ]; then
+              docker tag "$CURRENT_IMG" ai-proj-backend:rollback 2>/dev/null || true
+            fi
+
+            echo "=== Pulling latest images ==="
+            $COMPOSE pull
+
+            echo "=== Restarting services (with health check wait) ==="
+            $COMPOSE up -d --wait --remove-orphans || {
+              echo "=== DEPLOY FAILED — rolling back backend ==="
+              docker pull ai-proj-backend:rollback 2>/dev/null || true
+              $COMPOSE up -d backend 2>/dev/null || true
+              exit 1
+            }
+
+            echo "=== Cleaning up old images ==="
+            docker image prune -f
+
+            echo "=== Deploy complete ==="
+            $COMPOSE ps
