@@ -24,10 +24,9 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          fingerprint: ${{ secrets.SSH_FINGERPRINT || '' }}
           command_timeout: 15m
+          debug: true
           script: |
-            set -e
             set -e
             APP_DIR="${{ secrets.DEPLOY_PATH || '/opt/ai-proj' }}"
             COMPOSE="docker compose -f $APP_DIR/docker-compose.prod.yml"
