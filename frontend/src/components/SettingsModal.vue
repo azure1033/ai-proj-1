@@ -506,7 +506,7 @@ const resetCustomForms = (): void => {
 }
 
 const isMaskedKey = (key: string): boolean => {
-  return !key || key === '***' || /^\*+$/.test(key)
+  return !key || key === '***' || /^\*+$/.test(key) || key.includes('...')
 }
 
 // ── Fetch providers from backend ──────────────────────
@@ -516,17 +516,17 @@ const fetchProviders = async (): Promise<void> => {
     if (data.llm) providers.llm = data.llm
     if (data.embedding) providers.embedding = data.embedding
 
-    // Auto-select active providers (always sync selectedLlm/selectedEmbedding)
+    // Auto-select active providers (only on first load, don't overwrite user selection)
     const activeL = providers.llm.find(p => p.is_active)
-    if (activeL) {
-      if (!selectedLlmId.value) selectedLlmId.value = activeL.id
+    if (activeL && !selectedLlmId.value) {
+      selectedLlmId.value = activeL.id
       selectedLlm.value = activeL
       initEditForm('llm', activeL)
     }
 
     const activeE = providers.embedding.find(p => p.is_active)
-    if (activeE) {
-      if (!selectedEmbeddingId.value) selectedEmbeddingId.value = activeE.id
+    if (activeE && !selectedEmbeddingId.value) {
+      selectedEmbeddingId.value = activeE.id
       selectedEmbedding.value = activeE
       initEditForm('embedding', activeE)
     }
@@ -587,7 +587,11 @@ const testConnection = async (type: 'llm' | 'embedding'): Promise<void> => {
     const body: Record<string, string> = {}
     if (form.api_key) body.api_key = form.api_key
     const { data } = await api.post(`/providers/${id}/test`, body)
-    setResult({ success: true, message: data.message ?? '连接成功' })
+    if (data.success !== false) {
+      setResult({ success: true, message: data.message ?? '连接成功' })
+    } else {
+      setResult({ success: false, message: data.error ?? '连接失败' })
+    }
   } catch (err: any) {
     const msg = err?.response?.data?.detail ?? err?.message ?? '连接失败'
     setResult({ success: false, message: `连接失败: ${msg}` })
@@ -635,18 +639,22 @@ const activateProvider = async (type: 'llm' | 'embedding'): Promise<void> => {
 
   setActivating(true)
   try {
-    // If API key changed, update it first
-    if (form.api_key) {
-      const p = type === 'llm' ? selectedLlm.value : selectedEmbedding.value
-      if (p && form.api_key !== p.api_key && !isMaskedKey(form.api_key)) {
-        const updateBody: Record<string, string> = { api_key: form.api_key }
-        if (p.is_preset === false) {
-          updateBody.name = form.name
-          updateBody.base_url = form.base_url
-          updateBody.model_name = form.model_name
-        }
-        await api.put(`/providers/${id}`, updateBody)
-      }
+    // Send changed fields before activating
+    const p = type === 'llm' ? selectedLlm.value : selectedEmbedding.value
+    const updateBody: Record<string, string> = {}
+
+    if (form.api_key && !isMaskedKey(form.api_key)) {
+      updateBody.api_key = form.api_key
+    }
+
+    if (p && p.is_preset === false) {
+      if (form.base_url && form.base_url !== p.base_url) updateBody.base_url = form.base_url
+      if (form.model_name && form.model_name !== p.model_name) updateBody.model_name = form.model_name
+      if (form.name && form.name !== p.name) updateBody.name = form.name
+    }
+
+    if (Object.keys(updateBody).length > 0) {
+      await api.put(`/providers/${id}`, updateBody)
     }
     // Activate
     await api.post(`/providers/${id}/activate`)

@@ -7,7 +7,7 @@ import os
 import json
 import shutil
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -77,7 +77,7 @@ def append_document(filename: str, text: str) -> dict:
         "id": doc_id,
         "filename": filename,
         "text": text,
-        "uploaded_at": datetime.utcnow().isoformat() + "Z",
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
     DOCUMENTS.append(document)
     return document
@@ -160,7 +160,7 @@ async def _migrate_chat_history_json(db: AsyncSession) -> None:
     # 创建 "历史记录" 会话
     from models import SessionModel
     legacy_id = "legacy-" + uuid4().hex[:8]
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     db.add(SessionModel(
         id=legacy_id,
         name="历史记录",
@@ -185,7 +185,7 @@ async def _migrate_chat_history_json(db: AsyncSession) -> None:
             role=MessageRole.user if role_str == "user" else MessageRole.assistant,
             content=str(content),
             intent=str(intent) if intent else None,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         ))
         count += 1
 
@@ -578,6 +578,16 @@ class ProviderUpdateRequest(BaseModel):
     model_name: str | None = None
 
 
+class ProviderTestRequest(BaseModel):
+    api_key: str | None = None
+
+
+class ProviderTestCustomRequest(BaseModel):
+    base_url: str
+    model_name: str
+    api_key: str = ""
+
+
 @app.get("/providers")
 async def list_providers(db: AsyncSession = Depends(get_db)):
     """列出所有 provider（api_key 脱敏）"""
@@ -698,10 +708,39 @@ async def activate_provider(provider_id: str, db: AsyncSession = Depends(get_db)
 
 
 @app.post("/providers/{provider_id}/test")
-async def test_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
-    """测试 provider 连接"""
-    result = await get_provider_manager().test_connection(provider_id, db)
+async def test_provider(provider_id: str, request: ProviderTestRequest | None = None, db: AsyncSession = Depends(get_db)):
+    """测试 provider 连接（可选使用请求中的 api_key）"""
+    override_key = request.api_key if request and request.api_key else None
+    result = await get_provider_manager().test_connection(provider_id, db, api_key_override=override_key)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "连接失败"))
     return result
+
+
+@app.post("/providers/test-custom")
+async def test_custom_provider(request: ProviderTestCustomRequest):
+    """测试自定义 provider 连接（无需保存到 DB）"""
+    import httpx
+
+    api_key = request.api_key or ""
+    base_url = request.base_url.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = await client.get(f"{base_url}/models", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                count = len(data.get("data", []))
+                return {"success": True, "model_count": count, "message": f"连接成功，发现 {count} 个模型"}
+            else:
+                raise HTTPException(status_code=400, detail=f"HTTP {resp.status_code}: {resp.text[:200]}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=400, detail="连接超时（5s）")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/")

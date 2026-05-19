@@ -54,9 +54,6 @@ class ModelProviderManager:
     def get_active_embedding_id(self) -> str:
         """获取当前活跃 Embedding provider 的 ID"""
         return _cache.get("embedding_id", "") or ""
-        """获取当前活跃 LLM 的 model name"""
-        from model_config import MODEL
-        return MODEL
 
     def _reload_llm_sync(self):
         """同步加载 LLM 配置到缓存（从 model_config 兼容层读取）"""
@@ -95,7 +92,7 @@ class ModelProviderManager:
             logger.warning("没有活跃的 LLM provider")
             return
 
-        api_key = decrypt(provider.api_key) or "dummy"
+        api_key = decrypt(provider.api_key) or ""
         _cache["llm_id"] = provider.id
 
         # openai.OpenAI client
@@ -138,7 +135,7 @@ class ModelProviderManager:
             logger.info(f"Embedding provider 已激活: {provider.name} (本地)")
             return
 
-        api_key = decrypt(provider.api_key) or "dummy"
+        api_key = decrypt(provider.api_key) or ""
         try:
             from langchain_openai import OpenAIEmbeddings
             _cache["embedding_client"] = OpenAIEmbeddings(
@@ -180,7 +177,7 @@ class ModelProviderManager:
 
         return True
 
-    async def test_connection(self, provider_id: str, db) -> dict:
+    async def test_connection(self, provider_id: str, db, api_key_override: str | None = None) -> dict:
         """测试 provider 连接（调用 /models 端点验证）"""
         from sqlalchemy import select
         from models import ModelProvider
@@ -191,7 +188,10 @@ class ModelProviderManager:
         if not provider:
             return {"success": False, "error": "Provider 不存在"}
 
-        api_key = decrypt(provider.api_key) or "dummy"
+        if api_key_override is not None:
+            api_key = api_key_override
+        else:
+            api_key = decrypt(provider.api_key) or ""
         base_url = provider.base_url.rstrip("/")
 
         try:
