@@ -8,6 +8,7 @@ node_modules/
 .opencode
 .sisyphus
 test.json
+.superpowers/
 
 backend/chat_history.json
 backend/uploads
