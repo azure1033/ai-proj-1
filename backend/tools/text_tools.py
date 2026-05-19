@@ -4,9 +4,16 @@
 
 from langchain.tools import BaseTool
 
-from model_config import get_openai_client, MODEL
+from provider_manager import get_provider_manager
+from model_config import MODEL
 
-client = get_openai_client()
+
+def _get_client_and_model():
+    """获取 LLM 客户端和模型名（优先 DB 动态配置，回退 model_config）"""
+    pm = get_provider_manager()
+    llm_config = pm.get_active_llm_config()
+    model = llm_config.model_name if llm_config else MODEL
+    return pm.get_active_llm_client(), model
 
 
 class SummarizeTool(BaseTool):
@@ -19,8 +26,9 @@ class SummarizeTool(BaseTool):
 
     def _run(self, text: str) -> str:
         try:
+            client, model = _get_client_and_model()
             response = client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 messages=[{"role": "user", "content": f"请总结以下内容：{text}"}],
                 max_tokens=300,
             )
@@ -42,8 +50,9 @@ class TranslateTool(BaseTool):
 
     def _run(self, text: str) -> str:
         try:
+            client, model = _get_client_and_model()
             response = client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 messages=[{"role": "user", "content": f"请将以下文本翻译成中文：{text}"}],
                 max_tokens=500,
             )
@@ -65,8 +74,9 @@ class ExplainCodeTool(BaseTool):
 
     def _run(self, code: str) -> str:
         try:
+            client, model = _get_client_and_model()
             response = client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 messages=[{"role": "user", "content": f"请解释以下代码：{code}"}],
                 max_tokens=500,
             )

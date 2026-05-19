@@ -17,7 +17,7 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-ENV_PATH = Path(__file__).parent.parent / ".env"
+ENV_PATH = Path(__file__).parent / ".env"
 FERNET_KEY_ENV = "FERNET_KEY"
 
 _cipher: Fernet | None = None

@@ -20,20 +20,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
-from model_config import get_openai_client
 from tools import get_all_tools
-from tools.rag_tool import set_rag_session
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-7s [mcp] %(message)s")
 logger = logging.getLogger("mcp-server")
 
 # ── 加载 .env 配置 ──────────────────────────────────────────
-env_path = Path(__file__).parent.parent / ".env"
+env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-# ── 初始化（模块级，与 FastAPI 行为一致） ────────────────────
-get_openai_client()   # 触发 LLM 客户端初始化（同 text_tools.py 模式）
-set_rag_session("mcp")  # MCP 场景使用固定会话，共享知识库
+# ── RAG 会话注册（MCP 场景使用固定会话，共享知识库） ──────────
+from tools.rag_tool import set_rag_session
+set_rag_session("mcp")
 
 # ── 创建 FastMCP 实例 ───────────────────────────────────────
 mcp = FastMCP("ai-assistant")

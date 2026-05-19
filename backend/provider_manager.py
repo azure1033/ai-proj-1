@@ -95,22 +95,32 @@ class ModelProviderManager:
         api_key = decrypt(provider.api_key) or ""
         _cache["llm_id"] = provider.id
 
+        # 非本地模型无 API Key 时跳过客户端创建，保留旧缓存
+        if not api_key.strip() and not provider.is_local:
+            logger.warning(f"LLM provider '{provider.name}' 未设置 API Key，跳过客户端创建。请先在设置中填入 API Key 再激活。")
+            return
+
         # openai.OpenAI client
-        _cache["llm_client"] = openai.OpenAI(
-            api_key=api_key,
-            base_url=provider.base_url,
-        )
+        try:
+            _cache["llm_client"] = openai.OpenAI(
+                api_key=api_key,
+                base_url=provider.base_url,
+            )
+        except Exception as e:
+            logger.warning(f"OpenAI 客户端创建失败: {e}")
 
         # LangChain ChatOpenAI
-        from langchain_openai import ChatOpenAI
-        _cache["llm_config"] = ChatOpenAI(
-            model=provider.model_name,
-            openai_api_key=api_key,
-            openai_api_base=provider.base_url,
-            temperature=0.7,
-        )
-
-        logger.info(f"LLM provider 已激活: {provider.name} ({provider.model_name})")
+        try:
+            from langchain_openai import ChatOpenAI
+            _cache["llm_config"] = ChatOpenAI(
+                model=provider.model_name,
+                openai_api_key=api_key,
+                openai_api_base=provider.base_url,
+                temperature=0.7,
+            )
+            logger.info(f"LLM provider 已激活: {provider.name} ({provider.model_name})")
+        except Exception as e:
+            logger.warning(f"ChatOpenAI 创建失败: {e}")
 
     async def _reload_embedding(self, db) -> None:
         """从 DB 加载活跃 Embedding provider 并创建客户端"""
@@ -136,6 +146,10 @@ class ModelProviderManager:
             return
 
         api_key = decrypt(provider.api_key) or ""
+        if not api_key.strip():
+            logger.warning(f"Embedding provider '{provider.name}' 未设置 API Key，回退到本地模型")
+            _cache["embedding_client"] = _create_local_embedding()
+            return
         try:
             from langchain_openai import OpenAIEmbeddings
             _cache["embedding_client"] = OpenAIEmbeddings(
@@ -146,8 +160,12 @@ class ModelProviderManager:
             )
             logger.info(f"Embedding provider 已激活: {provider.name} ({provider.model_name})")
         except Exception as e:
-            logger.warning(f"Embedding 客户端创建失败: {e}，回退到本地模型")
-            _cache["embedding_client"] = _create_local_embedding()
+            logger.warning(f"Embedding 客户端创建失败: {e}，尝试回退到本地模型")
+            local = _create_local_embedding()
+            if local is not None:
+                _cache["embedding_client"] = local
+            else:
+                logger.warning("本地嵌入模型也不可用，Embedding 功能暂不可用")
 
     async def switch_provider(self, provider_id: str, db) -> bool:
         """切换活跃 provider（同一 type 内取消其他激活）"""
@@ -226,14 +244,21 @@ _local_embeddings = None
 
 
 def _create_local_embedding():
-    """创建本地 HuggingFace Embeddings"""
+    """创建本地 HuggingFace Embeddings（可能因依赖缺失返回 None）"""
     global _local_embeddings
     if _local_embeddings is None:
-        logger.info("加载本地嵌入模型: shibing624/text2vec-base-chinese")
-        from langchain_huggingface import HuggingFaceEmbeddings
-        _local_embeddings = HuggingFaceEmbeddings(
-            model_name="shibing624/text2vec-base-chinese",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
+        try:
+            logger.info("加载本地嵌入模型: shibing624/text2vec-base-chinese")
+            from langchain_huggingface import HuggingFaceEmbeddings
+            _local_embeddings = HuggingFaceEmbeddings(
+                model_name="shibing624/text2vec-base-chinese",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+        except ModuleNotFoundError:
+            logger.warning("langchain_huggingface 未安装，本地嵌入模型不可用")
+            return None
+        except Exception as e:
+            logger.warning(f"本地嵌入模型加载失败: {e}")
+            return None
     return _local_embeddings

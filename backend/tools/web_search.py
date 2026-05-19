@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from langchain.tools import BaseTool
 
 # 加载项目根目录 .env
-env_path = Path(__file__).parent.parent.parent / ".env"
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()

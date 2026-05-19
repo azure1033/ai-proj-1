@@ -6,11 +6,19 @@ import requests
 from dotenv import load_dotenv
 from langchain.tools import BaseTool
 from langchain_core.prompts import PromptTemplate
-from model_config import get_langchain_llm, MODEL
+from provider_manager import get_provider_manager
 
 load_dotenv()
 
-llm = get_langchain_llm()
+
+def _get_llm():
+    """懒加载 LLM（优先 DB 动态配置，回退 model_config）"""
+    pm = get_provider_manager()
+    llm = pm.get_active_llm_config()
+    if llm is not None:
+        return llm
+    from model_config import get_langchain_llm
+    return get_langchain_llm()
 
 
 class WeatherTool(BaseTool):
@@ -229,7 +237,7 @@ def extract_city_from_query(query: str) -> str:
 
 返回格式：城市名称（如果无法识别则返回"无"）
 """
-    response = llm.invoke([{"role": "user", "content": extraction_prompt}])
+    response = _get_llm().invoke([{"role": "user", "content": extraction_prompt}])
     city = response.content.strip()
     
     # 如果LLM返回的结果在支持列表中，则使用；否则返回None
@@ -281,7 +289,7 @@ def get_weather_advice(city: str) -> str:
     weather_info = weather_tool._run(city)
     focus = "综合建议"
     prompt = weather_prompt.format(weather_info=weather_info, user_focus=focus)
-    response = llm.invoke([{"role": "user", "content": prompt}])
+    response = _get_llm().invoke([{"role": "user", "content": prompt}])
     return response.content
 
 def get_weather_advice_with_focus(query: str) -> str:
@@ -306,6 +314,6 @@ def get_weather_advice_with_focus(query: str) -> str:
     
     # 生成针对性建议
     prompt = weather_prompt.format(weather_info=weather_info, user_focus=user_focus)
-    response = llm.invoke([{"role": "user", "content": prompt}])
+    response = _get_llm().invoke([{"role": "user", "content": prompt}])
     return response.content
 

@@ -701,9 +701,22 @@ async def delete_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
 @app.post("/providers/{provider_id}/activate")
 async def activate_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
     """激活指定 provider"""
+    from models import ModelProvider
+    from encryption import decrypt
+
+    provider = await db.get(ModelProvider, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider 不存在")
+
+    # 非本地 provider 需要有效的 API Key
+    if not provider.is_local:
+        api_key = decrypt(provider.api_key) or ""
+        if not api_key.strip():
+            raise HTTPException(status_code=400, detail="请先设置 API Key 再激活该 Provider")
+
     success = await get_provider_manager().switch_provider(provider_id, db)
     if not success:
-        raise HTTPException(status_code=404, detail="Provider 不存在")
+        raise HTTPException(status_code=500, detail="激活失败")
     return {"id": provider_id, "message": "已激活，即时生效"}
 
 

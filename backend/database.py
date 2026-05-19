@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+aiomysql://ai_chat_user:chat123@localhost:3306/ai_chat")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 _engine = None
 _async_session_factory = None
@@ -31,6 +31,11 @@ def _get_engine():
     """懒加载异步引擎"""
     global _engine
     if _engine is None and is_mysql_enabled():
+        if not DATABASE_URL:
+            raise RuntimeError(
+                "USE_MYSQL=true 但 DATABASE_URL 未设置。"
+                "请在 .env 中配置 DATABASE_URL=mysql+aiomysql://user:password@host:3306/dbname"
+            )
         _engine = create_async_engine(
             DATABASE_URL,
             echo=False,
