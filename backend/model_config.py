@@ -1,10 +1,13 @@
 """
-模型配置模块 - 支持多 Provider 切换（LLM 和 Embedding 独立配置）
+模型配置模块 - 纯配置读取器
 
-LLM Provider:   zhipu | ollama | siliconflow
-Embed Provider:  zhipu | local  | siliconflow
+通过 .env 中的 LLM_PROVIDER / EMBEDDING_PROVIDER 读取静态配置。
+不再提供客户端工厂函数 — 客户端创建统一由 provider_manager 负责。
 
-通过 .env 中的 LLM_PROVIDER 和 EMBEDDING_PROVIDER 变量控制
+Public API:
+    read_llm_config()      -> dict  {base_url, api_key, model, is_ollama}
+    read_embedding_config() -> dict  {provider, api_key, model}
+    get_embedding_function()       (保留，供 provider_manager 回退使用)
 """
 import os
 import logging
@@ -17,23 +20,20 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-# ===================== LLM Provider 配置 =====================
+# ===================== 内部变量（仅供公共函数使用） =====================
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").strip().lower()
+_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").strip().lower()
 
 # 向后兼容：如果设置了 OLLAMA_MODEL 但未设置 LLM_PROVIDER，自动推断为 ollama
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()
-if OLLAMA_MODEL and not LLM_PROVIDER:
-    LLM_PROVIDER = "ollama"
+_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()
+if _OLLAMA_MODEL and not _LLM_PROVIDER:
+    _LLM_PROVIDER = "ollama"
     logger.info("检测到 OLLAMA_MODEL 已设置，自动推断 LLM_PROVIDER=ollama")
 
-# 默认使用 zhipu
-if not LLM_PROVIDER:
-    LLM_PROVIDER = "zhipu"
+if not _LLM_PROVIDER:
+    _LLM_PROVIDER = "zhipu"
 
-# 各 Provider 的 API 配置
-# base_url: API 基础地址，ChatOpenAI 会在其后追加 /chat/completions
-PROVIDER_CONFIG = {
+_PROVIDER_CONFIG = {
     "zhipu": {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "api_key_env": "ZHIPU_API_KEY",
@@ -42,7 +42,7 @@ PROVIDER_CONFIG = {
     "ollama": {
         "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
         "api_key_env": None,
-        "model": OLLAMA_MODEL or "qwen2.5:3b",
+        "model": _OLLAMA_MODEL or "qwen2.5:3b",
     },
     "siliconflow": {
         "base_url": "https://api.siliconflow.cn/v1",
@@ -51,54 +51,78 @@ PROVIDER_CONFIG = {
     },
 }
 
-if LLM_PROVIDER not in PROVIDER_CONFIG:
-    logger.warning(f"未知的 LLM_PROVIDER: {LLM_PROVIDER}，回退到 zhipu")
-    LLM_PROVIDER = "zhipu"
+if _LLM_PROVIDER not in _PROVIDER_CONFIG:
+    logger.warning(f"未知的 LLM_PROVIDER: {_LLM_PROVIDER}，回退到 zhipu")
+    _LLM_PROVIDER = "zhipu"
 
-config = PROVIDER_CONFIG[LLM_PROVIDER]
-BASE_URL = config["base_url"]
-API_KEY = os.getenv(config["api_key_env"], "") if config["api_key_env"] else "dummy"
-MODEL = config["model"]
-IS_OLLAMA = LLM_PROVIDER == "ollama"
+_config = _PROVIDER_CONFIG[_LLM_PROVIDER]
+_BASE_URL = _config["base_url"]
+_API_KEY = os.getenv(_config["api_key_env"], "") if _config["api_key_env"] else "dummy"
+_MODEL = _config["model"]
+_IS_OLLAMA = _LLM_PROVIDER == "ollama"
 
 # API Key 缺失警告
-if config["api_key_env"] and not os.getenv(config["api_key_env"], "").strip():
+if _config["api_key_env"] and not os.getenv(_config["api_key_env"], "").strip():
     logger.warning(
-        f"LLM Provider '{LLM_PROVIDER}' 需要 {config['api_key_env']}，但未在 .env 中找到。"
-        f"请设置 {config['api_key_env']}=your_key 或切换 LLM_PROVIDER"
+        f"LLM Provider '{_LLM_PROVIDER}' 需要 {_config['api_key_env']}，但未在 .env 中找到。"
+        f"请设置 {_config['api_key_env']}=your_key 或切换 LLM_PROVIDER"
     )
 
 
-def get_openai_client():
-    """获取 OpenAI 客户端 (main.py 使用)"""
-    import openai
-    return openai.OpenAI(api_key=API_KEY, base_url=BASE_URL)
+# ===================== 公共 API =====================
 
-
-def get_langchain_llm():
-    """获取 LangChain LLM (weather_agent.py / agent.py 使用)
+def read_llm_config() -> dict:
+    """读取 .env 中的 LLM 配置（纯数据，不创建客户端）
     
-    根据 LLM_PROVIDER 返回对应的 ChatOpenAI 实例。
+    Returns:
+        {
+            "base_url": str,   # API 基础地址（含 /v1 或 /v4 路径前缀）
+            "api_key": str,    # API Key（Ollama 时为 "dummy"）
+            "model": str,      # 模型名称
+            "is_ollama": bool, # 是否 Ollama 本地模型
+        }
     """
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model=MODEL,
-        openai_api_key=API_KEY,
-        openai_api_base=BASE_URL,  # base_url 已包含 /v1 或 /v4 路径前缀
-        temperature=0.7,
-    )
+    return {
+        "base_url": _BASE_URL,
+        "api_key": _API_KEY,
+        "model": _MODEL,
+        "is_ollama": _IS_OLLAMA,
+    }
 
 
-# ===================== Embedding Provider 配置 =====================
+def read_embedding_config() -> dict:
+    """读取 .env 中的 Embedding 配置（纯数据，不创建客户端）
+    
+    Returns:
+        {
+            "provider": str,  # zhipu | local | siliconflow
+            "api_key": str,   # API Key（local 时为空）
+            "model": str,     # 模型名称
+        }
+    """
+    provider = os.getenv("EMBEDDING_PROVIDER", "").strip().lower()
+    if not provider:
+        provider = "zhipu"
 
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "").strip().lower()
+    api_key = ""
+    model = ""
 
-if not EMBEDDING_PROVIDER:
-    EMBEDDING_PROVIDER = "zhipu"
+    if provider == "zhipu":
+        api_key = os.getenv("ZHIPU_API_KEY", "").strip()
+        model = os.getenv("ZHIPU_EMBEDDING_MODEL", "embedding-2").strip()
+    elif provider == "siliconflow":
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        model = "BAAI/bge-large-zh-v1.5"
+    # local: api_key and model stay empty
 
-ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "").strip()
-ZHIPU_EMBEDDING_MODEL = os.getenv("ZHIPU_EMBEDDING_MODEL", "embedding-2").strip()
+    return {
+        "provider": provider,
+        "api_key": api_key,
+        "model": model,
+    }
 
+
+# ===================== Embedding 客户端工厂（保留，供 provider_manager 回退使用） =====================
 
 def get_embedding_function():
     """获取 Embedding 实例（根据 EMBEDDING_PROVIDER）
@@ -111,22 +135,25 @@ def get_embedding_function():
         local       → HuggingFaceEmbeddings (本地 text2vec, 768维)
         siliconflow → OpenAIEmbeddings (云端 API)
     """
-    if EMBEDDING_PROVIDER == "zhipu":
-        if not ZHIPU_API_KEY:
+    cfg = read_embedding_config()
+    provider = cfg["provider"]
+
+    if provider == "zhipu":
+        if not cfg["api_key"]:
             logger.warning("EMBEDDING_PROVIDER=zhipu 但 ZHIPU_API_KEY 未设置，回退到 local")
             return _get_local_embeddings()
         try:
             from langchain_community.embeddings import ZhipuAIEmbeddings
-            logger.info(f"使用智谱 Embedding: model={ZHIPU_EMBEDDING_MODEL}")
+            logger.info(f"使用智谱 Embedding: model={cfg['model']}")
             return ZhipuAIEmbeddings(
-                model=ZHIPU_EMBEDDING_MODEL,
-                api_key=ZHIPU_API_KEY,
+                model=cfg["model"],
+                api_key=cfg["api_key"],
             )
         except Exception as e:
             logger.warning(f"智谱 Embedding 初始化失败: {e}，回退到 local")
             return _get_local_embeddings()
 
-    elif EMBEDDING_PROVIDER == "siliconflow":
+    elif provider == "siliconflow":
         try:
             from langchain_openai import OpenAIEmbeddings
             logger.info("使用 SiliconFlow Embedding")

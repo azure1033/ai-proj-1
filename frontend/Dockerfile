@@ -1,4 +1,4 @@
-# ---- Stage 1: Build Vue app ----
+# ---- Stage 1: Build React app ----
 FROM node:22-alpine AS builder
 WORKDIR /app
 

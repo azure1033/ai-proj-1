@@ -5,14 +5,17 @@
 from langchain.tools import BaseTool
 
 from provider_manager import get_provider_manager
-from model_config import MODEL
 
 
 def _get_client_and_model():
     """获取 LLM 客户端和模型名（优先 DB 动态配置，回退 model_config）"""
     pm = get_provider_manager()
     llm_config = pm.get_active_llm_config()
-    model = llm_config.model_name if llm_config else MODEL
+    if llm_config:
+        model = llm_config.model_name
+    else:
+        from model_config import read_llm_config
+        model = read_llm_config()["model"]
     return pm.get_active_llm_client(), model
 
 

@@ -56,11 +56,21 @@ class ModelProviderManager:
         return _cache.get("embedding_id", "") or ""
 
     def _reload_llm_sync(self):
-        """同步加载 LLM 配置到缓存（从 model_config 兼容层读取）"""
-        from model_config import get_openai_client, get_langchain_llm, MODEL
+        """同步加载 LLM 配置到缓存（从 model_config 读取纯配置后创建客户端）"""
+        from model_config import read_llm_config
         try:
-            _cache["llm_client"] = get_openai_client()
-            _cache["llm_config"] = get_langchain_llm()
+            cfg = read_llm_config()
+            _cache["llm_client"] = openai.OpenAI(
+                api_key=cfg["api_key"],
+                base_url=cfg["base_url"],
+            )
+            from langchain_openai import ChatOpenAI
+            _cache["llm_config"] = ChatOpenAI(
+                model=cfg["model"],
+                openai_api_key=cfg["api_key"],
+                openai_api_base=cfg["base_url"],
+                temperature=0.7,
+            )
         except Exception as e:
             logger.warning(f"LLM 客户端创建失败: {e}")
 

@@ -8,7 +8,7 @@ Persist chat messages and session metadata to MySQL, ensuring data survives serv
 
 ### Requirement: Chat history persists across server restarts
 
-The system SHALL store all chat messages and session metadata in a MySQL database, ensuring data survives server restarts and container recreation.
+The system SHALL store all chat messages and session metadata in a MySQL database, ensuring data survives server restarts and container recreation. All session management imports SHALL reference `session_store.py` directly; the compatibility shim files `session_memory.py` and `session_manager.py` are removed.
 
 #### Scenario: Messages survive server restart
 - **WHEN** user sends messages in a session and the server restarts
@@ -32,7 +32,7 @@ The system SHALL store messages keyed by session ID, such that each session's me
 
 ### Requirement: Legacy data migration
 
-On first startup with MySQL enabled, the system SHALL automatically migrate existing `chat_history.json` data into MySQL under a dedicated "历史记录" session.
+On first startup with MySQL enabled, the system SHALL automatically migrate existing `chat_history.json` data into MySQL under a dedicated "历史记录" session. Migration logic is implemented in `services/chat_service.py::migrate_chat_history_json()`.
 
 #### Scenario: First-time migration
 - **WHEN** the backend starts with MySQL enabled and `chat_history.json` exists
@@ -68,3 +68,19 @@ The system SHALL keep session metadata (message_count, preview, updated_at) cons
 #### Scenario: Session list sorted by recent activity
 - **WHEN** `GET /sessions` is called
 - **THEN** sessions are returned ordered by `updated_at` descending
+
+### Requirement: All session imports reference session_store.py directly
+
+Any code that imports session management functions SHALL import from `session_store.py` directly. The compatibility shim files `session_memory.py` and `session_manager.py` SHALL be removed.
+
+#### Scenario: Import from session_store
+- **WHEN** `from session_store import get_or_create_session, add_message` is executed
+- **THEN** the import succeeds and returns the canonical implementations
+
+#### Scenario: Import from session_memory fails
+- **WHEN** `from session_memory import add_message` is executed
+- **THEN** the import fails with `ModuleNotFoundError`, confirming the shim has been removed
+
+#### Scenario: Import from session_manager fails
+- **WHEN** `from session_manager import create_session` is executed
+- **THEN** the import fails with `ModuleNotFoundError`, confirming the shim has been removed

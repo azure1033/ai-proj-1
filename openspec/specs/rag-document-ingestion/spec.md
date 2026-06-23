@@ -8,12 +8,12 @@ Automatic document ingestion pipeline: text extraction, Chinese-aware chunking, 
 
 ### Requirement: 文档上传后自动入库
 
-系统 SHALL 在文档上传成功后自动执行分块、生成嵌入向量、存入向量库的完整入库流程。
+系统 SHALL 在文档上传成功后自动执行分块、生成嵌入向量、存入向量库的完整入库流程。文档元数据 SHALL 通过会话存储系统（session_store 或数据库）追踪，不再使用模块级全局变量 `DOCUMENTS`。
 
 #### Scenario: 上传 TXT 文件自动入库
 
 - **WHEN** 用户上传一个 TXT 文件
-- **THEN** 系统提取文本内容 → 中文分块 → 生成嵌入向量 → 存入当前会话对应的 ChromaDB collection，并返回分块数量
+- **THEN** 系统提取文本内容 → 中文分块 → 生成嵌入向量 → 存入当前会话对应的 ChromaDB collection → 文档元数据写入会话存储，并返回分块数量
 
 #### Scenario: 上传 PDF 文件自动入库
 
@@ -41,12 +41,12 @@ Automatic document ingestion pipeline: text extraction, Chinese-aware chunking, 
 
 ### Requirement: 嵌入向量生成
 
-系统 SHALL 使用 text2vec-base-chinese 模型将文本块转换为 768 维向量。
+系统 SHALL 通过 `provider_manager.get_active_embedding()` 获取嵌入模型实例，将文本块转换为嵌入向量。
 
 #### Scenario: 生成文本块向量
 
 - **WHEN** 文本块内容为中文
-- **THEN** 系统调用 text2vec-base-chinese 模型生成归一化的 768 维向量
+- **THEN** 系统调用活跃的 Embedding Provider 生成嵌入向量
 
 #### Scenario: 模型未就绪时返回错误
 
@@ -61,3 +61,17 @@ Automatic document ingestion pipeline: text extraction, Chinese-aware chunking, 
 
 - **WHEN** 文档成功入库
 - **THEN** API 响应中包含 `chunks` 字段，值为实际生成的分块数量
+
+### Requirement: 文档元数据与会话绑定
+
+文档元数据 SHALL 按会话隔离存储。MySQL 模式下通过 session_id 外键关联；内存模式下使用 `session_store` 中的字典结构 `_document_registry[session_id]`。
+
+#### Scenario: 按会话列出文档
+
+- **WHEN** `GET /documents?session_id=abc` 被调用
+- **THEN** 系统只返回 session_id 为 "abc" 的文档列表，不返回其他会话的文档
+
+#### Scenario: 删除会话时清理文档
+
+- **WHEN** 一个会话被删除
+- **THEN** 该会话关联的所有文档元数据和向量数据均被清理

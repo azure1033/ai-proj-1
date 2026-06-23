@@ -50,12 +50,12 @@ services:
     working_dir: /app
     ports:
       - "5173:5173"
-    environment:
-      - VITE_API_BASE_URL=/api
     volumes:
       # 源码挂载（HMR 热更新，免 rebuild）
       - ./frontend:/app
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+      # node_modules 匿名卷，避免覆盖宿主机
+      - /app/node_modules
+    command: sh -c "npm install --legacy-peer-deps && npm run dev -- --host 0.0.0.0"
     depends_on:
       - backend
     networks:
