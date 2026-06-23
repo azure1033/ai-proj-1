@@ -17,7 +17,7 @@ export default function WelcomeScreen({ onSend }: WelcomeScreenProps) {
 
   return (
     <div className="welcome-screen">
-      <div className="welcome-icon">🤖</div>
+      <div className="welcome-icon">AI</div>
       <h1>{t('welcomeTitle')}</h1>
       <p>{t('welcomeDesc')}</p>
       <div className="welcome-suggestions">

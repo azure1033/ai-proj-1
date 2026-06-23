@@ -123,23 +123,54 @@ async def test_provider(provider_id: str, request: ProviderTestRequest | None = 
 
 @router.post("/providers/test-custom")
 async def test_custom_provider(request: ProviderTestCustomRequest):
+    """测试自定义 provider 连接 — 兼容 OpenAI (Bearer) 和 Anthropic (x-api-key) 格式"""
     import httpx
 
     api_key = request.api_key or ""
     base_url = request.base_url.rstrip("/")
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            resp = await client.get(f"{base_url}/models", headers=headers)
+
+    async def try_openai(client: httpx.AsyncClient) -> dict | None:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        resp = await client.get(f"{base_url}/models", headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            count = len(data.get("data", []))
+            return {"success": True, "model_count": count, "message": f"连接成功 (OpenAI)，发现 {count} 个模型"}
+        return None
+
+    async def try_anthropic(client: httpx.AsyncClient) -> dict | None:
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        resp = await client.post(
+            f"{base_url}/v1/messages",
+            headers=headers,
+            json={"model": request.model_name or "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
+        )
+        # Any non-network error response (including auth errors) means the endpoint is reachable
+        if resp.status_code < 500:
             if resp.status_code == 200:
-                data = resp.json()
-                count = len(data.get("data", []))
-                return {"success": True, "model_count": count, "message": f"连接成功，发现 {count} 个模型"}
+                return {"success": True, "model_count": 1, "message": "连接成功 (Anthropic)"}
             else:
-                raise HTTPException(status_code=400, detail=f"HTTP {resp.status_code}: {resp.text[:200]}")
+                data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err = data.get("error", {}).get("message", resp.text[:100]) if isinstance(data, dict) else resp.text[:100]
+                return {"success": True, "model_count": 0, "message": f"连接成功 (Anthropic) — {err}"}
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            # Try OpenAI format first
+            result = await try_openai(client)
+            if result:
+                return result
+
+            # Try Anthropic format
+            result = await try_anthropic(client)
+            if result:
+                return result
+
+            raise HTTPException(status_code=400, detail=f"无法连接: 请检查 base_url 和 API Key 是否正确")
     except httpx.TimeoutException:
-        raise HTTPException(status_code=400, detail="连接超时（5s）")
+        raise HTTPException(status_code=400, detail="连接超时（8s）")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

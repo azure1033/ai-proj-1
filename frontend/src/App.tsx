@@ -1,8 +1,9 @@
-import { useState, useCallback, useRef } from 'react'
-import { LocaleProvider, useLocale } from './context/LocaleContext'
+import { useState, useCallback, useEffect } from 'react'
+import { LocaleProvider } from './context/LocaleContext'
 import AppSidebar from './components/AppSidebar'
 import ChatView from './components/ChatView'
 import type { Session } from './types'
+import api from './api'
 
 function generateId(): string {
   return crypto.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -11,70 +12,121 @@ function generateId(): string {
   })
 }
 
-function loadSessions(): Session[] {
-  try {
-    const saved = localStorage.getItem('ai-chat-sessions')
-    return saved ? JSON.parse(saved) : []
-  } catch { return [] }
-}
-
-function loadCurrentId(): string | null {
-  return localStorage.getItem('ai-chat-current-session')
-}
-
 export default function App() {
-  const [sessions, setSessions] = useState<Session[]>(loadSessions)
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(loadCurrentId)
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const saveSessions = useCallback((updated: Session[]) => {
-    setSessions(updated)
-    localStorage.setItem('ai-chat-sessions', JSON.stringify(updated))
+  // ── Load sessions from backend on mount ──────────────────
+  useEffect(() => {
+    const savedId = localStorage.getItem('ai-chat-current-session')
+
+    api.get('/sessions')
+      .then(res => {
+        const serverSessions: Session[] = res.data.sessions || []
+        setSessions(serverSessions)
+
+        // Determine current session
+        if (savedId && serverSessions.some(s => s.id === savedId)) {
+          setCurrentSessionId(savedId)
+        } else if (serverSessions.length > 0) {
+          setCurrentSessionId(serverSessions[0].id)
+        } else {
+          // No sessions at all — create one
+          createSession().then(id => setCurrentSessionId(id))
+        }
+      })
+      .catch(() => {
+        // Backend unavailable — fallback to localStorage
+        try {
+          const saved = localStorage.getItem('ai-chat-sessions')
+          const local: Session[] = saved ? JSON.parse(saved) : []
+          setSessions(local)
+          setCurrentSessionId(savedId || local[0]?.id || null)
+        } catch { setCurrentSessionId(null) }
+      })
+      .finally(() => setLoading(false))
   }, [])
 
+  // ── Persist current session ID to localStorage ──────────
   const saveCurrentId = useCallback((id: string | null) => {
     setCurrentSessionId(id)
     if (id) localStorage.setItem('ai-chat-current-session', id)
     else localStorage.removeItem('ai-chat-current-session')
   }, [])
 
-  const onCreateSession = useCallback(() => {
-    const now = new Date().toISOString()
-    const s: Session = { id: generateId(), name: '新会话', message_count: 0, created_at: now, updated_at: now }
-    const updated = [s, ...sessions]
-    saveSessions(updated)
-    saveCurrentId(s.id)
-  }, [sessions, saveSessions, saveCurrentId])
+  // ── Helper: create session on backend ────────────────────
+  const createSession = async (name?: string): Promise<string> => {
+    try {
+      const res = await api.post('/sessions', { name: name || '新会话' })
+      return res.data.session.id
+    } catch {
+      return generateId()
+    }
+  }
+
+  // ── CRUD handlers ───────────────────────────────────────
+
+  const onCreateSession = useCallback(async () => {
+    const id = await createSession()
+    // Reload session list from backend
+    try {
+      const res = await api.get('/sessions')
+      setSessions(res.data.sessions || [])
+    } catch { /* ignore */ }
+    saveCurrentId(id)
+  }, [saveCurrentId])
 
   const onSelectSession = useCallback((id: string) => {
     saveCurrentId(id)
   }, [saveCurrentId])
 
   const onRenameSession = useCallback(async (id: string, name: string) => {
-    const updated = sessions.map(s => s.id === id ? { ...s, name, updated_at: new Date().toISOString() } : s)
-    saveSessions(updated)
-    try { await fetch(`/api/sessions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }) } catch { /* silent */ }
-  }, [sessions, saveSessions])
+    // Update locally first (instant feedback)
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name, updated_at: new Date().toISOString() } : s))
+    // Sync to backend
+    try {
+      await api.patch(`/sessions/${id}`, { name })
+    } catch { /* silent */ }
+  }, [])
 
   const onDeleteSession = useCallback(async (id: string) => {
+    // Remove locally first
     const updated = sessions.filter(s => s.id !== id)
-    saveSessions(updated)
-    try { await fetch(`/api/sessions/${id}`, { method: 'DELETE' }) } catch { /* silent */ }
+    setSessions(updated)
+    // Sync to backend
+    try {
+      await api.delete(`/sessions/${id}`)
+    } catch { /* silent */ }
+    // Switch to next session
     if (currentSessionId === id) {
       const nextId = updated[0]?.id || null
-      saveCurrentId(nextId)
+      if (nextId) {
+        saveCurrentId(nextId)
+      } else {
+        // No sessions left — create one
+        const newId = await createSession()
+        try {
+          const res = await api.get('/sessions')
+          setSessions(res.data.sessions || [])
+        } catch { /* ignore */ }
+        saveCurrentId(newId)
+      }
     }
-  }, [sessions, saveSessions, currentSessionId, saveCurrentId])
+  }, [sessions, currentSessionId, saveCurrentId])
 
-  // Init: create default session if none exist
-  const initialized = useRef(false)
-  if (!initialized.current) {
-    initialized.current = true
-    if (!currentSessionId && sessions.length === 0) {
-      const now = new Date().toISOString()
-      const s: Session = { id: generateId(), name: '新会话', message_count: 0, created_at: now, updated_at: now }
-      saveSessions([s])
-      saveCurrentId(s.id)
-    }
+  // ── After sending a message, refresh session metadata ────
+  const onMessageSent = useCallback(async () => {
+    try {
+      const res = await api.get('/sessions')
+      setSessions(res.data.sessions || [])
+    } catch { /* ignore */ }
+  }, [])
+
+  if (loading) {
+    return <div className="app-root" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>加载中...</div>
+    </div>
   }
 
   return (
@@ -90,6 +142,7 @@ export default function App() {
         />
         <ChatView
           currentSessionId={currentSessionId}
+          onMessageSent={onMessageSent}
         />
       </div>
     </LocaleProvider>

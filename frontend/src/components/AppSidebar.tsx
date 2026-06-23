@@ -71,7 +71,7 @@ export default function AppSidebar({ sessions, currentSessionId, onSelect, onCre
                     className="btn-delete-session"
                     onClick={e => { e.stopPropagation(); if (confirm(t('confirmDelete'))) onDelete(s.id) }}
                     title={t('deleteSession')}
-                  >🗑</button>
+                  >✕</button>
                 </>
               )}
             </div>
@@ -95,6 +95,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [embProviders, setEmbProviders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
+  const [testResult, setTestResult] = useState('')
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [form, setForm] = useState({ id: '', name: '', provider_type: 'llm', base_url: '', api_key: '', model_name: '' })
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null)
+  const [editingKeyValue, setEditingKeyValue] = useState('')
 
   const loadProviders = async () => {
     setLoading(true)
@@ -118,42 +123,128 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const handleTestConnection = async (providerId: string) => {
+    setTestResult('')
+    try {
+      const res = await api.post(`/providers/${providerId}/test`)
+      setTestResult(res.data.message || '连接成功')
+    } catch (err: any) {
+      setTestResult(err.response?.data?.detail || '连接失败')
+    }
+  }
+
+  const handleSaveApiKey = async (providerId: string) => {
+    if (!editingKeyValue.trim()) return
+    try {
+      await api.put(`/providers/${providerId}`, { api_key: editingKeyValue })
+      setMessage('API Key 已保存')
+      setEditingKeyId(null)
+      setEditingKeyValue('')
+      loadProviders()
+    } catch (err: any) {
+      setMessage(err.response?.data?.detail || '保存失败')
+    }
+  }
+
+  const handleAddProvider = async () => {
+    if (!form.id || !form.name || !form.base_url || !form.model_name) {
+      setMessage('请填写所有必填字段')
+      return
+    }
+    try {
+      await api.post('/providers', form)
+      setMessage('添加成功')
+      setShowAddForm(false)
+      setForm({ id: '', name: '', provider_type: 'llm', base_url: '', api_key: '', model_name: '' })
+      loadProviders()
+    } catch (err: any) {
+      setMessage(err.response?.data?.detail || '添加失败')
+    }
+  }
+
   if (loading) return <div className="modal-overlay"><div className="modal"><div className="modal-body">{t('thinking')}</div></div></div>
+
+  const ProviderCard = ({ p }: { p: any }) => (
+    <div className={`provider-card ${p.is_active ? 'provider-card--active' : ''}`}>
+      <div className="provider-name">{p.name}</div>
+      <div className="provider-model">{p.model_name}</div>
+      <div className="provider-url">{p.base_url}</div>
+      {editingKeyId === p.id ? (
+        <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+          <input className="session-edit-input" type="password" placeholder="API Key"
+            value={editingKeyValue} onChange={e => setEditingKeyValue(e.target.value)}
+            style={{ flex: 1, fontSize: '12px' }} autoFocus
+            onKeyDown={e => e.key === 'Enter' && handleSaveApiKey(p.id)} />
+          <button className="btn-sm" onClick={() => handleSaveApiKey(p.id)}>保存</button>
+          <button className="btn-sm" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
+            onClick={() => setEditingKeyId(null)}>取消</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+          {p.is_active
+            ? <span className="provider-badge provider-badge--active">{t('active')}</span>
+            : <button className="btn-sm" onClick={() => handleActivate(p.id)}>{t('activate')}</button>
+          }
+          <button className="btn-sm" style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
+            onClick={() => handleTestConnection(p.id)}>{t('testConnection')}</button>
+          <button className="btn-sm" style={{ background: 'var(--bg-elevated)', color: 'var(--accent-cyan)', border: '1px solid var(--border-default)', fontSize: '11px' }}
+            onClick={() => { setEditingKeyId(p.id); setEditingKeyValue('') }}
+            title="Set API Key">🔑</button>
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ minWidth: '520px' }}>
         <div className="modal-header">
           <h3>{t('settings')}</h3>
           <button className="btn-close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
-          {message && <div className="settings-message">{message}</div>}
+          {message && <div className="settings-message" onClick={() => setMessage('')}>{message}</div>}
+          {testResult && <div className="settings-message" onClick={() => setTestResult('')}>{testResult}</div>}
+
+          {/* ── Add Provider Form ── */}
+          <button className="btn-new-session" style={{ width: '100%', margin: '0 0 12px 0' }}
+            onClick={() => setShowAddForm(!showAddForm)}>
+            + {t('addProvider')}
+          </button>
+          {showAddForm && (
+            <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', padding: '12px', marginBottom: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                <input className="session-edit-input" placeholder="ID (e.g. my-provider)" value={form.id}
+                  onChange={e => setForm({ ...form, id: e.target.value })} />
+                <input className="session-edit-input" placeholder="Name" value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <select style={{ width: '100%', marginBottom: '8px', padding: '4px 8px', background: 'var(--bg-input)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px' }}
+                value={form.provider_type} onChange={e => setForm({ ...form, provider_type: e.target.value })}>
+                <option value="llm">LLM Provider</option>
+                <option value="embedding">Embedding Provider</option>
+              </select>
+              <input className="session-edit-input" placeholder="Base URL (https://api.deepseek.com/v1)" value={form.base_url}
+                onChange={e => setForm({ ...form, base_url: e.target.value })} style={{ width: '100%', marginBottom: '8px' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                <input className="session-edit-input" type="password" placeholder="API Key" value={form.api_key}
+                  onChange={e => setForm({ ...form, api_key: e.target.value })} />
+                <input className="session-edit-input" placeholder="Model Name (deepseek-v4-pro)" value={form.model_name}
+                  onChange={e => setForm({ ...form, model_name: e.target.value })} />
+              </div>
+              <button className="btn-sm" onClick={handleAddProvider} style={{ width: '100%', padding: '8px' }}>
+                {t('addProvider')}
+              </button>
+            </div>
+          )}
+
           <h4>{t('llmProvider')}</h4>
           <div className="provider-grid">
-            {llmProviders.map((p: any) => (
-              <div key={p.id} className={`provider-card ${p.is_active ? 'provider-card--active' : ''}`}>
-                <div className="provider-name">{p.name}</div>
-                <div className="provider-model">{p.model_name}</div>
-                {p.is_active
-                  ? <span className="provider-badge provider-badge--active">{t('active')}</span>
-                  : <button className="btn-sm" onClick={() => handleActivate(p.id)}>{t('activate')}</button>
-                }
-              </div>
-            ))}
+            {llmProviders.map((p: any) => <ProviderCard key={p.id} p={p} />)}
           </div>
           <h4>{t('embeddingProvider')}</h4>
           <div className="provider-grid">
-            {embProviders.map((p: any) => (
-              <div key={p.id} className={`provider-card ${p.is_active ? 'provider-card--active' : ''}`}>
-                <div className="provider-name">{p.name}</div>
-                <div className="provider-model">{p.model_name}</div>
-                {p.is_active
-                  ? <span className="provider-badge provider-badge--active">{t('active')}</span>
-                  : <button className="btn-sm" onClick={() => handleActivate(p.id)}>{t('activate')}</button>
-                }
-              </div>
-            ))}
+            {embProviders.map((p: any) => <ProviderCard key={p.id} p={p} />)}
           </div>
         </div>
       </div>

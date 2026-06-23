@@ -8,9 +8,10 @@ import api from '../api'
 
 interface ChatViewProps {
   currentSessionId: string | null
+  onMessageSent: () => void
 }
 
-export default function ChatView({ currentSessionId }: ChatViewProps) {
+export default function ChatView({ currentSessionId, onMessageSent }: ChatViewProps) {
   const { t } = useLocale()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
@@ -103,10 +104,12 @@ export default function ChatView({ currentSessionId }: ChatViewProps) {
           steps: finalSteps.length > 0 ? finalSteps : undefined,
         }])
       }
+      onMessageSent()
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setMessages(prev => [...prev, { role: 'assistant', content: t('error') + ': ' + err.message }])
       }
+      onMessageSent()
     } finally {
       setStreaming(false)
       setStreamingText('')
