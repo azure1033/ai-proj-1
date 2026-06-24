@@ -1,298 +1,143 @@
 # AI 智能问答助手
 
-基于大语言模型 + Python 全栈开发的轻量级 AI 助手，集成了 RAG 知识库、Tool-Calling Agent 和统一对话界面。
+> 一个面向实际痛点的全栈 AI Agent 应用 —— 从单体巨石到模块化架构的重构实践。
 
-## ✨ 核心功能
+## 解决了什么问题
 
-### 🤖 Tool-Calling Agent 模式
-- 多步推理：自主决定调用哪些工具、按什么顺序
-- 7 个工具：天气查询、网页搜索、**知识库检索**、文本总结、翻译、代码解释、计算器
-- 智能分流：简单查询走快速路径，复杂查询自动触发 Agent
-- 网页搜索：支持 Tavily API / DuckDuckGo，获取实时信息
+| 痛点 | 表现 | 解决方案 | 量化成果 |
+|------|------|----------|----------|
+| **单体膨胀** | `main.py` 761 行，所有路由、业务逻辑、数据模型挤在一个文件 | 按域拆分为 7 个路由 + 7 个服务 + 7 个 Schema 模块 | `main.py` → **115 行**（缩减 85%） |
+| **会话管理断裂** | 前端纯 localStorage，后端完全不知情，新建/删除/重命名不同步 | 启动时 `GET /sessions` 加载，增删改全部走 API | 会话列表与后端**实时一致**，message_count 不再恒为 0 |
+| **Provider 配置混乱** | `.env`（静态）和 DB（动态）两套系统并存，module-level init 导致热切换失败 | 统一为 `provider_manager` 单例入口，`model_config` 降级为纯配置读取器 | **2 → 1** 套系统，6 个预设 + 自定义 Provider |
+| **重复代码** | `weather_agent.py`（319 行）与 `tools/weather_tool.py`（27 行）各有一套 WeatherTool | 合并为单一 `WeatherTool`，硬编码 150 行城市坐标替换为 LLM 地理编码 | 删除 **356 行**重复/废弃代码 |
+| **前端技术债** | Vue 3 单文件组件，无类型安全，无组件复用 | 迁移至 React 18 + TypeScript，9 个函数组件，LocaleContext 国际化 | 组件从 **1 个** 拆为 **9 个** |
+| **无错误兜底** | 异常直接暴露为 500 或原始 HTTPException | 3 层全局异常处理器 | 错误响应格式**统一**为 `{"error":"...","detail":"..."}` |
 
-### 💬 统一对话界面
-- 实时聊天对话体验，支持 **SSE 流式响应**（打字效果）
-- Agent 步骤面板：可展开查看 AI 思考过程
-- 多会话管理：左侧边栏创建/切换/重命名/删除会话
-- 会话记忆：对话历史持久化，上下文感知回复
-- 中英文国际化（zh/en）
-- 暗色/亮色模式自适应
-- 响应式设计，适配桌面和移动端
+## 架构设计
 
-### 📚 RAG 知识库
-- 文档上传自动向量化入库（PDF/Word/TXT）
-- 中文智能分块（RecursiveCharacterTextSplitter + 中文分隔符）
-- 语义检索集成到 Agent 对话流程
-- 会话隔离：每个会话独立知识库，互不干扰
-- 右侧滑出面板：拖拽上传、进度条、索引状态
+```
+┌─────────────────────────────────────────────────────────┐
+│                    前端 (React 18 + TS)                   │
+│  App.tsx ──┬── AppSidebar (会话 CRUD / 设置 / 知识库)    │
+│            └── ChatView (SSE 流式 / Agent 步骤面板)       │
+├─────────────────────────────────────────────────────────┤
+│                  FastAPI App Factory (115L)               │
+│  路由层    routers/ (7 modules)  ← HTTP 协议边界          │
+│  服务层    services/ (7 modules) ← 业务逻辑边界            │
+│  模型层    schemas/  (7 modules) ← 数据契约边界            │
+│  Agent     agent.py              ← LangChain 编排         │
+│  工具集    tools/   (7 BaseTool) ← 能力边界               │
+├─────────────────────────────────────────────────────────┤
+│  存储层    MySQL (会话/消息/Provider) + ChromaDB (向量)    │
+│  配置层    .env + DB provider_manager (运行时热切换)       │
+│  安全层    Fernet 加密 (API Key) + 异常处理 + CORS         │
+└─────────────────────────────────────────────────────────┘
+```
 
-### 🌦️ 天气查询
-- 自然语言天气查询，LLM 提取城市 + 地理编码
-- Open-Meteo API 实时天气数据（免费，无需 API Key）
-- 针对性生活建议（穿衣、出行、健康等）
-
-### ⚙️ 多 Provider 架构
-- LLM/Embedding 独立可切换，支持运行时热切换无需重启
-- 6 个预设 LLM Provider + 4 个预设 Embedding Provider
-- API Key Fernet 加密存储，支持自定义 Provider
-
-### 🔌 MCP Server
-- 将 7 个工具以 MCP 协议暴露
-- 支持 stdio（Claude Desktop）和 streamable-http 两种模式
+**设计原则**：每层有明确的职责边界。路由处理 HTTP 协议，服务处理业务逻辑，Schema 定义数据契约，三者互不越界。
 
 ## 技术栈
 
-- **后端**：Python + FastAPI + LangChain 1.x + LangGraph
-- **前端**：React 18 + TypeScript + Vite
-- **AI 核心（多 Provider）**：
-  - 智谱 AI `glm-4-flash`（默认）+ `embedding-2`
-  - DeepSeek / OpenAI / Groq / SiliconFlow / Ollama
-- **向量数据库**：ChromaDB（本地持久化）
-- **数据库**：MySQL 8.0（生产）/ 内存 dict（开发）
-- **天气数据**：Open-Meteo API（免费）
-- **部署**：Docker Compose（mysql + backend + frontend + nginx）
+- **后端**：Python + FastAPI + LangChain 1.x + LangGraph + SQLAlchemy 2.0
+- **前端**：React 18 + TypeScript + Vite（零 CSS 框架/状态库依赖）
+- **AI**：多 Provider 架构（智谱/DeepSeek/OpenAI/Groq/Ollama/SiliconFlow），运行时热切换
+- **存储**：MySQL 8.0（生产）/ 内存 dict（开发）+ ChromaDB 向量持久化
+- **部署**：Docker Compose（MySQL + Backend + Frontend + Nginx health check）
+- **MCP**：FastMCP 协议暴露 7 个工具（stdio + streamable-http）
 
 ## 🚀 快速开始
 
-### 前置要求
-- Python 3.10+
-- Node.js 18+
-- 智谱 AI API Key（[免费注册](https://open.bigmodel.cn/)）
-
-### 本地开发
-
-**1. 配置环境变量**
-
-在项目根目录创建 `.env`：
-
 ```bash
-LLM_PROVIDER=zhipu
-EMBEDDING_PROVIDER=zhipu
-ZHIPU_API_KEY=your_zhipu_api_key_here
-```
+# 1. 配置 API Key（项目根目录 .env）
+echo "ZHIPU_API_KEY=your_key" > .env
 
-**2. 启动后端**
-
-```bash
-cd backend
-pip install -r requirements.txt
-python -m uvicorn main:app --reload --port 8000
-```
-
-**3. 启动前端**
-
-```bash
-cd frontend
-npm install --legacy-peer-deps
-npm run dev
-```
-
-打开浏览器访问：`http://localhost:5173`
-
-### Docker 部署
-
-```bash
+# 2. 一键启动
 docker compose up -d --build
-```
 
-服务端口：
-- 前端：`http://localhost:5173`
-- 后端 API：`http://localhost:8000`（内部）
-- MySQL：`localhost:3306`
+# 3. 访问
+# 前端: http://localhost:5173
+# 后端: http://localhost:8000 (内部)
+```
 
 ## 📁 项目结构
 
 ```
-.
-├── backend/
-│   ├── main.py                  # FastAPI app 工厂（~115 行）
-│   ├── routers/                 # 7 个域路由器
-│   │   ├── chat.py              # /ask, /history
-│   │   ├── documents.py         # /documents/*
-│   │   ├── sessions.py          # /sessions CRUD
-│   │   ├── providers.py         # /providers CRUD + activate + test
-│   │   ├── rag.py               # /rag/status, /rag/settings
-│   │   ├── weather.py           # /weather
-│   │   └── preferences.py       # /preferences
-│   ├── services/                # 7 个业务逻辑模块
-│   │   ├── chat_service.py      # Agent 执行 + SSE 流式
-│   │   ├── document_service.py  # 文档上传/删除/列表
-│   │   ├── session_service.py   # 会话管理委托
-│   │   ├── provider_service.py  # Provider CRUD 业务逻辑
-│   │   ├── rag_service.py       # RAG 状态/设置
-│   │   └── migration_service.py # 旧数据迁移
-│   ├── schemas/                 # 7 个 Pydantic 模型模块
-│   ├── config/                  # logging.py 集中日志配置
-│   ├── tools/                   # Agent 工具集（7 个 BaseTool）
-│   │   ├── rag_tool.py          # RAG 知识库引擎
-│   │   ├── weather_tool.py      # 天气查询 + LLM 地理编码
-│   │   ├── web_search.py        # Tavily / DuckDuckGo
-│   │   ├── text_tools.py        # 总结/翻译/代码解释
-│   │   └── calculator.py        # 安全计算器
-│   ├── agent.py                 # LangChain Tool-Calling Agent
-│   ├── model_config.py          # .env 配置读取器
-│   ├── provider_manager.py      # 动态 Provider 管理器（单例）
-│   ├── models.py                # SQLAlchemy ORM（sessions + messages + model_providers）
-│   ├── database.py              # MySQL 异步引擎 + init_db
-│   ├── session_store.py         # 会话存储（MySQL / 内存双模式）
-│   ├── encryption.py            # Fernet API Key 加解密
-│   ├── mcp_server.py            # MCP 协议服务器
-│   ├── requirements.txt         # Python 依赖
-│   ├── pyproject.toml           # 项目元数据
-│   ├── chroma_db/               # ChromaDB 向量持久化
-│   ├── uploads/                 # 上传原始文件
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx              # 根组件（会话状态管理）
-│   │   ├── main.tsx             # React 入口
-│   │   ├── api.ts               # Axios 实例
-│   │   ├── types.ts             # TypeScript 类型定义
-│   │   ├── style.css            # CSS 变量 + 暗色模式 + 响应式
-│   │   ├── context/
-│   │   │   └── LocaleContext.tsx # 国际化上下文（zh/en）
-│   │   └── components/
-│   │       ├── AppSidebar.tsx    # 侧边栏 + SettingsModal + KnowledgePanel
-│   │       ├── ChatView.tsx      # 聊天区 + SSE 流式处理
-│   │       ├── ChatInput.tsx     # 输入框 + 发送按钮
-│   │       ├── MessageList.tsx   # 消息列表 + 自动滚动
-│   │       ├── MessageBubble.tsx # 消息气泡 + Agent 步骤面板
-│   │       └── WelcomeScreen.tsx # 空状态欢迎页
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tsconfig.app.json
-│   ├── nginx.conf
-│   └── Dockerfile
-├── db/
-│   └── init.sql                 # MySQL 建表
-├── docker-compose.yml
-├── .env                         # 环境变量（不提交）
-└── README.md
+backend/
+├── main.py              # App 工厂（115 行）
+├── routers/             # 7 个路由模块（HTTP 边界）
+├── services/            # 7 个服务模块（业务边界）
+├── schemas/             # 7 个 Schema 模块（数据边界）
+├── tools/               # 7 个 BaseTool（能力边界）
+├── agent.py             # Agent 编排核心
+├── provider_manager.py  # 动态 Provider 管理器（单例）
+├── model_config.py      # .env 配置读取器
+├── session_store.py     # MySQL/内存双模式会话存储
+├── encryption.py        # Fernet API Key 加解密
+├── models.py            # SQLAlchemy ORM
+├── database.py          # MySQL 异步引擎
+├── mcp_server.py        # MCP 协议服务器
+└── config/logging.py    # 集中日志配置
+
+frontend/src/
+├── App.tsx              # 根组件（启动时 GET /sessions 加载）
+├── context/LocaleContext.tsx  # zh/en 国际化
+└── components/
+    ├── AppSidebar.tsx    # 侧边栏 + SettingsModal + KnowledgePanel
+    ├── ChatView.tsx      # 聊天区 + SSE 流式（fetch ReadableStream）
+    ├── ChatInput.tsx     # 输入框（Enter 发送 / Shift+Enter 换行）
+    ├── MessageList.tsx   # 消息列表 + 自动滚动
+    ├── MessageBubble.tsx # 消息气泡 + Agent 步骤面板 + Markdown
+    └── WelcomeScreen.tsx # 空状态 + 建议问题（可点击发送）
 ```
 
-## 📚 API 文档
+## 💡 核心设计决策
 
-### 统一对话接口
+### 1. 分层上下文隔离 — 解决"在哪里改什么代码"
+路由、服务、Schema 三层各司其职。新增功能只需关注对应层，无需理解全部 761 行代码。每层的修改不会波及到其他层的逻辑。
 
-```
-POST /ask?stream=true           # SSE 流式响应
-POST /ask                        # 非流式响应
+### 2. Provider 热切换 — 解决"换模型必须重启"
+`provider_manager` 单例从 DB 读取活跃 Provider，运行时 `POST /providers/{id}/activate` 即时生效。前端设置面板一键切换，6 个预设 + 自定义 Provider，API Key 加密入库。
 
-Body: { "query": "...", "session_id": "optional" }
-```
+### 3. Session 双向同步 — 解决"前端有会话、后端不知道"
+启动时 `GET /sessions` 从后端加载 5 个已有会话。创建/删除/重命名全部走 API，localStorage 仅存当前会话 ID。每次消息收发后自动刷新列表，`message_count` 实时准确。
 
-### 会话管理
+### 4. LLM 地理编码 — 解决"50 个城市不够用"
+用 LLM 推断任意城市的经纬度，替换硬编码 150 行 `city_coords`。验证坐标合法性（±90°/±180°），失败时回退 Top-10 城市字典。支持全球任意 LLM 知道的城市的天气查询。
 
-```
-GET    /sessions                 # 会话列表
-POST   /sessions                 # 创建会话
-GET    /sessions/{id}            # 会话详情
-PATCH  /sessions/{id}            # 重命名
-DELETE /sessions/{id}            # 删除会话
-GET    /sessions/{id}/history    # 会话消息历史
-```
+### 5. 安全闭环 — 解决"API Key 明文风险"
+**存储**：Fernet 对称加密入库，密钥自动生成写入 `.env`。**传输**：API 响应中 `mask_key()` 脱敏（`sk-...abc1`）。**前端**：输入框 `type="password"`，不可见。
 
-### 知识库
+### 6. 评测闭环 — 解决"改了代码不知道有没有坏"
+Docker 容器内自动化测试覆盖：Provider CRUD（6 项）、激活/切换、加密脱敏、预设保护、双格式连接测试（OpenAI + Anthropic）。每次改动后 `docker compose up` 即可验证全链路。
+
+## 📡 API
 
 ```
-POST   /documents/upload         # 上传文档 → 自动入库
-GET    /documents                # 文档列表（含索引状态）
-DELETE /documents/{id}           # 删除单个文档
-GET    /rag/status               # 知识库状态
-GET    /rag/settings             # 获取 RAG 设置
-POST   /rag/settings             # 保存 RAG 设置
-```
-
-### Provider 管理
-
-```
-GET    /providers                # 列出所有 provider（Key 脱敏）
-POST   /providers                # 新增自定义 provider
-PUT    /providers/{id}           # 更新配置（preset 仅允许改 Key）
-DELETE /providers/{id}           # 删除（preset 拒绝）
-POST   /providers/{id}/activate  # 激活（即时生效）
-POST   /providers/{id}/test      # 测试连接
-POST   /providers/test-custom    # 测试自定义连接
-```
-
-### 其他
-
-```
-POST   /weather                  # 天气查询（自然语言）
-POST   /preferences              # 保存用户偏好
-GET    /preferences              # 获取偏好
-DELETE /preferences              # 删除偏好
-GET    /history                  # 获取历史
-POST   /history/clear            # 清除历史
-```
-
-## 💡 使用示例
-
-```bash
-# 对话
-curl -X POST "http://localhost:8000/ask" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"今天北京热不热"}'
-
-# SSE 流式
-curl -X POST "http://localhost:8000/ask?stream=true" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"你好"}'
-
-# 上传文档
-curl -X POST "http://localhost:8000/documents/upload" \
-  -F "file=@document.pdf"
-
-# 查看 Provider
-curl "http://localhost:8000/providers"
-
-# 激活 Provider
-curl -X POST "http://localhost:8000/providers/zhipu/activate"
+POST   /ask?stream=true      SSE 流式对话
+POST   /ask                   非流式对话
+GET    /sessions              会话列表（含 message_count/preview）
+POST   /sessions              创建会话
+PATCH  /sessions/{id}          重命名
+DELETE /sessions/{id}          删除（级联清理 RAG 向量）
+GET    /providers              Provider 列表（Key 脱敏）
+POST   /providers              添加自定义 Provider
+PUT    /providers/{id}         更新 Key（preset 仅允许改 Key）
+POST   /providers/{id}/activate  激活（运行时热切换）
+POST   /providers/{id}/test      测试连接（OpenAI + Anthropic 双格式）
+POST   /documents/upload        上传文档 → 自动分块 → 向量入库
+GET    /rag/status              知识库状态
 ```
 
 ## 🔌 MCP Server
 
-将 7 个工具以 MCP 协议暴露，兼容 Claude Desktop、Cursor 等客户端。
-
 ```bash
 cd backend
-python -m mcp_server                              # stdio
+python -m mcp_server                                # stdio
 python -m mcp_server --transport streamable-http --port 8765  # HTTP
 ```
 
-### 暴露的工具
-
-| MCP Tool | 功能 |
-|----------|------|
-| `get_weather` | 天气查询 + 穿衣建议 |
-| `web_search` | 互联网搜索 |
-| `search_knowledge_base` | 知识库语义检索 |
-| `summarize_text` | 文本总结 |
-| `translate_text` | 英→中翻译 |
-| `explain_code` | 代码解释 |
-| `calculator` | 数学计算 |
-
-## ❓ 常见问题
-
-**Q: 如何切换 AI 模型？**
-
-前端设置面板中直接切换，即时生效无需重启。或在 `.env` 中修改 `LLM_PROVIDER`。
-
-**Q: 如何添加新的 Agent 工具？**
-
-1. 在 `backend/tools/` 下创建新工具文件（继承 `BaseTool`）
-2. 在 `backend/tools/__init__.py` 的 `get_all_tools()` 中注册
-3. 如需独立 API 端点，在 `backend/routers/` 添加路由
-
-**Q: 知识库文档存在哪里？**
-
-原始文件在 `backend/uploads/`，向量数据在 `backend/chroma_db/`。删除会话自动清理。
-
-**Q: 天气支持哪些城市？**
-
-使用 LLM 地理编码，支持 LLM 知道的任何城市（中英文均可），不再依赖硬编码列表。
+暴露 7 个工具：`get_weather` / `web_search` / `search_knowledge_base` / `summarize_text` / `translate_text` / `explain_code` / `calculator`
 
 ---
 
-**版本**: 4.0.0 | **日期**: 2026-06-23
+**版本** 4.1.0 · **最后更新** 2026-06-23
