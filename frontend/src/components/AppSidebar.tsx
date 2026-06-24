@@ -9,9 +9,10 @@ interface AppSidebarProps {
   onCreate: () => void
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
+  onToggleDashboard: () => void
 }
 
-export default function AppSidebar({ sessions, currentSessionId, onSelect, onCreate, onRename, onDelete }: AppSidebarProps) {
+export default function AppSidebar({ sessions, currentSessionId, onSelect, onCreate, onRename, onDelete, onToggleDashboard }: AppSidebarProps) {
   const { t, locale, toggleLocale } = useLocale()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -39,6 +40,7 @@ export default function AppSidebar({ sessions, currentSessionId, onSelect, onCre
         <div className="sidebar-header">
           <h2>{t('appTitle')}</h2>
           <div className="sidebar-header-actions">
+            <button className="btn-icon" onClick={onToggleDashboard} title="Dashboard">📊</button>
             <button className="btn-icon" onClick={() => setShowKnowledge(!showKnowledge)} title={t('knowledgePanel')}>📚</button>
             <button className="btn-icon" onClick={() => setShowSettings(!showSettings)} title={t('settings')}>⚙</button>
             <button className="btn-icon" onClick={toggleLocale} title={t('language')}>{locale === 'zh' ? 'EN' : '中文'}</button>

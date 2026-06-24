@@ -9,6 +9,8 @@ All route handlers are in routers/. This file only handles:
 """
 
 import logging
+import asyncio
+import time
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -69,6 +71,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Observability Middleware ──────────────────────────────────
+
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    elapsed_ms = int((time.time() - start) * 1000)
+
+    if request.url.path == "/ask" and request.method == "POST" and response.status_code < 500:
+        asyncio.create_task(_log_request(request, response, elapsed_ms))
+
+    return response
+
+
+async def _log_request(request: Request, response, elapsed_ms: int):
+    try:
+        from database import get_db
+        from services.observability_service import save_request_log
+
+        async for db in get_db():
+            if db is None:
+                break
+            # Extract body (already consumed by FastAPI, try reading from state)
+            body = getattr(request.state, "_body", None)
+            session_id = "unknown"
+            error = None
+            tokens_in = tokens_out = tool_calls = 0
+            provider_id = model_name = None
+
+            if response.status_code >= 400:
+                error = f"HTTP {response.status_code}"
+
+            await save_request_log(
+                db, session_id=session_id, provider_id=provider_id, model_name=model_name,
+                tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=elapsed_ms,
+                tool_calls=tool_calls, error=error,
+            )
+            await db.commit()
+            break
+    except Exception:
+        pass  # Logging should never break the app
 
 # ── Routers ─────────────────────────────────────────────────
 
@@ -79,6 +122,7 @@ from routers.providers import router as providers_router
 from routers.rag import router as rag_router
 from routers.weather import router as weather_router
 from routers.preferences import router as preferences_router
+from routers.metrics import router as metrics_router
 
 app.include_router(chat_router)
 app.include_router(documents_router)
@@ -87,6 +131,7 @@ app.include_router(providers_router)
 app.include_router(rag_router)
 app.include_router(weather_router)
 app.include_router(preferences_router)
+app.include_router(metrics_router)
 
 
 # ── Startup ─────────────────────────────────────────────────

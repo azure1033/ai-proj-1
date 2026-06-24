@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { LocaleProvider } from './context/LocaleContext'
 import AppSidebar from './components/AppSidebar'
 import ChatView from './components/ChatView'
+import Dashboard from './components/Dashboard'
 import type { Session } from './types'
 import api from './api'
 
@@ -16,6 +17,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showDashboard, setShowDashboard] = useState(false)
 
   // ── Load sessions from backend on mount ──────────────────
   useEffect(() => {
@@ -139,11 +141,16 @@ export default function App() {
           onCreate={onCreateSession}
           onRename={onRenameSession}
           onDelete={onDeleteSession}
+          onToggleDashboard={() => setShowDashboard(!showDashboard)}
         />
-        <ChatView
-          currentSessionId={currentSessionId}
-          onMessageSent={onMessageSent}
-        />
+        {showDashboard ? (
+          <Dashboard />
+        ) : (
+          <ChatView
+            currentSessionId={currentSessionId}
+            onMessageSent={onMessageSent}
+          />
+        )}
       </div>
     </LocaleProvider>
   )

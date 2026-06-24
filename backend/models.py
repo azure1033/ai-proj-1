@@ -6,7 +6,7 @@ SQLAlchemy ORM 模型
 - messages: 聊天消息（外键关联 sessions，CASCADE 删除）
 """
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, Enum, JSON, DateTime, ForeignKey, BigInteger, Index, Boolean
+from sqlalchemy import Column, String, Text, Enum, JSON, DateTime, ForeignKey, BigInteger, Index, Boolean, Integer
 from sqlalchemy.orm import DeclarativeBase, relationship
 import enum
 
@@ -83,3 +83,28 @@ class ModelProvider(Base):
 
     def __repr__(self) -> str:
         return f"<ModelProvider {self.id} [{self.provider_type.value}]: {self.name}>"
+
+
+class RequestLog(Base):
+    __tablename__ = "request_logs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), nullable=False)
+    provider_id = Column(String(50), nullable=True)
+    model_name = Column(String(100), nullable=True)
+    tokens_in = Column(Integer, default=0)
+    tokens_out = Column(Integer, default=0)
+    latency_ms = Column(Integer, default=0)
+    tool_calls = Column(Integer, default=0)
+    tool_names = Column(JSON, nullable=True)
+    error = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("idx_rl_session", "session_id"),
+        Index("idx_rl_provider", "provider_id"),
+        Index("idx_rl_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RequestLog {self.id} [{self.provider_id}] {self.tokens_in}+{self.tokens_out}toks>"

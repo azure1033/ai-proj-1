@@ -143,9 +143,23 @@ def run_agent(query: str) -> dict:
         if not final_response:
             final_response = "抱歉，无法完成您的请求。请简化问题后重试。"
 
+        # 提取 token usage
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        for msg in reversed(messages):
+            if getattr(msg, "type", "") == "ai":
+                meta = getattr(msg, "response_metadata", {}) or {}
+                usage = meta.get("token_usage", {})
+                if usage:
+                    token_usage = {
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    }
+                break
+
         return {
             "response": final_response,
             "steps": steps,
+            "token_usage": token_usage,
         }
 
     except Exception as e:

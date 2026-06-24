@@ -261,3 +261,29 @@ h4 { font-size: 14px; color: var(--text-primary); margin: var(--space-3) 0 var(-
 .btn-delete-doc { background: none; border: none; cursor: pointer; opacity: 0.5; font-size: 12px; }
 .btn-delete-doc:hover { opacity: 1; color: var(--color-destructive); }
 .doc-empty { text-align: center; color: var(--text-tertiary); padding: var(--space-4); }
+
+/* Dashboard */
+.dashboard { flex: 1; overflow-y: auto; padding: 0; height: 100dvh; background: var(--bg-primary); }
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); padding: var(--space-4); }
+.metric-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: var(--space-4); text-align: center; }
+.metric-card--alert { border-color: var(--color-destructive); }
+.metric-label { display: block; font-size: 12px; color: var(--text-tertiary); margin-bottom: var(--space-1); }
+.metric-value { display: block; font-size: 24px; font-weight: 600; color: var(--text-primary); }
+.metric-card--alert .metric-value { color: var(--color-destructive); }
+.dashboard-section { padding: 0 var(--space-4) var(--space-4); }
+.dashboard-section h4 { font-size: 14px; margin-bottom: var(--space-3); }
+.bar-chart { display: flex; flex-direction: column; gap: var(--space-2); }
+.bar-row { display: flex; align-items: center; gap: var(--space-2); }
+.bar-label { width: 80px; font-size: 12px; color: var(--text-secondary); text-align: right; }
+.bar-track { flex: 1; height: 20px; background: var(--bg-elevated); border-radius: var(--radius-sm); overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent-primary); border-radius: var(--radius-sm); min-width: 2px; transition: width 0.5s ease; }
+.bar-value { width: 80px; font-size: 11px; color: var(--text-tertiary); }
+.trend-chart { display: flex; align-items: flex-end; gap: var(--space-1); height: 120px; padding: var(--space-2) 0; }
+.trend-bar-wrapper { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.trend-bar { width: 100%; max-width: 40px; background: var(--accent-primary); border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.3s ease; }
+.trend-bar:hover { background: var(--accent-primary-hover); }
+.trend-label { font-size: 10px; color: var(--text-tertiary); margin-top: var(--space-1); }
+
+@media (max-width: 767px) {
+  .metrics-grid { grid-template-columns: 1fr 1fr; }
+}
